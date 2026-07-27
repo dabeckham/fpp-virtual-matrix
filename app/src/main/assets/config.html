@@ -126,6 +126,7 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
       </select>
     </div>
     <div class="row"><label>Panel dpi</label><input type="range" id="panelDpi" min="0" max="400" step="1"><input class="num" type="number" id="panelDpi_n" step="1"></div>
+    <div class="achieved" id="geomNote"></div>
   </div>
 
   <div class="card">
@@ -252,17 +253,38 @@ const selected = new Set();
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (k,v) => k in DEC ? Number(v).toFixed(DEC[k]) : String(v);
+const same = (a,b) => Math.abs(Number(a) - Number(b)) < 1e-6;
+
+// An emitter can never be wider than its pitch — that ratio is the dark gap, and it is what makes
+// the panel read as discrete dots. The device enforces it either way; the point of tracking it here
+// is that the slider should not travel somewhere the value can never follow.
+const EMITTER_SLIDER_MAX = 30;
+function emitterCap() {
+  const p = Number(cfg.pitchMm);
+  return p > 0 ? Math.min(EMITTER_SLIDER_MAX, p) : EMITTER_SLIDER_MAX;
+}
 const bytes = b => b >= 1073741824 ? (b/1073741824).toFixed(1)+" GB"
                  : b >= 1048576 ? (b/1048576).toFixed(0)+" MB"
                  : b >= 1024 ? (b/1024).toFixed(0)+" KB" : b+" B";
 
 function paint() {
+  // Do this before the loop, so the emitter control is already carrying the right limit when its
+  // value is written back.
+  const cap = emitterCap();
+  const em = $("emitterMm"), emn = $("emitterMm_n");
+  if (em) em.max = cap;
+  if (emn) emn.max = cap;
+
   for (const k of NUM) {
     if (!(k in cfg)) continue;
     const r = $(k), n = $(k+"_n");
-    if (r && document.activeElement !== r) r.value = cfg[k];
-    if (n && document.activeElement !== n) n.value = fmt(k, cfg[k]);
+    // Normally leave the control you are holding alone. The exception is a value that came back
+    // different from what the control shows — that means the device clamped it, and the thumb has
+    // to be pulled back to where the value actually is or the two disagree until you let go.
+    if (r && (document.activeElement !== r || !same(r.value, cfg[k]))) r.value = cfg[k];
+    if (n && (document.activeElement !== n || !same(n.value, cfg[k]))) n.value = fmt(k, cfg[k]);
   }
+  paintGeomNote();
   for (const k of PLAIN) { const e = $(k); if (e && k in cfg && document.activeElement !== e) e.value = cfg[k]; }
   for (const k of TEXT) { const e = $(k); if (e && k in cfg && document.activeElement !== e) e.value = cfg[k]; }
   for (const k of SEL) { const e = $(k); if (e && k in cfg) e.value = String(cfg[k]); }
@@ -270,14 +292,51 @@ function paint() {
   paintProfileButtons();
 }
 
+// A slider that will not go where you drag it is maddening unless it says why.
+let capMsg = "", capTimer = 0;
+function noteCap(msg) {
+  capMsg = msg;
+  clearTimeout(capTimer);
+  capTimer = setTimeout(() => { capMsg = ""; paintGeomNote(); }, 4000);
+  paintGeomNote();
+}
+
+function paintGeomNote() {
+  const el = $("geomNote"); if (!el) return;
+  if (capMsg) { el.textContent = capMsg; el.className = "achieved warn"; return; }
+  if (cfg.pitchMm && same(cfg.emitterMm, emitterCap())) {
+    el.textContent = "Emitter is at its limit — it cannot be wider than the pitch ("
+                   + Number(cfg.pitchMm).toFixed(2) + " mm). Raise the pitch to go wider.";
+    el.className = "achieved";
+  } else {
+    el.textContent = ""; el.className = "achieved";
+  }
+}
+
+function describeCap(keys) {
+  if (keys.indexOf("emitterMm") >= 0) {
+    return "Emitter capped at " + Number(cfg.emitterMm).toFixed(2) + " mm — it cannot exceed the pitch ("
+         + Number(cfg.pitchMm).toFixed(2) + " mm).";
+  }
+  if (keys.indexOf("pitchMm") >= 0) return "Pitch limited to " + Number(cfg.pitchMm).toFixed(2) + " mm.";
+  return keys.join(", ") + " adjusted to the nearest value this panel can render.";
+}
+
 async function push(patch) {
+  const wanted = Object.assign({}, patch);
   Object.assign(cfg, patch);
   paint();
   if (sending) { queued = Object.assign(queued || {}, patch); return; }
   sending = true;
   try {
     const r = await fetch("api/config", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(patch) });
-    cfg = await r.json(); paint();
+    cfg = await r.json();
+    // Anything the device sent back changed is a value it refused. Say so rather than letting the
+    // control quietly disagree with the number beside it.
+    const capped = Object.keys(wanted).filter(
+      k => typeof wanted[k] === "number" && (k in cfg) && !same(wanted[k], cfg[k]));
+    if (capped.length) noteCap(describeCap(capped));
+    paint();
   } catch (e) {}
   sending = false;
   if (queued) { const q = queued; queued = null; push(q); }
