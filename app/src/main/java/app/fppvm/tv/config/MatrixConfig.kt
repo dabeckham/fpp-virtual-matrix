@@ -43,6 +43,13 @@ data class MatrixConfig(
 
     /** Listen for MultiSync and follow a player's timing. */
     val multiSyncEnabled: Boolean = true,
+    /**
+     * Accept live channel data pushed over DDP, and answer DDP discovery.
+     *
+     * Separate from MultiSync because they solve different halves of the problem: MultiSync
+     * follows a rendered show, DDP shows what a sequencer is producing right now.
+     */
+    val ddpEnabled: Boolean = true,
     /** Hostname advertised in ping packets; blank means use the device's own. */
     val hostname: String = "",
     /**
@@ -171,8 +178,19 @@ data class MatrixConfig(
         }
     val channelCount: Int get() = width * height * 3
 
-    /** The `"start-count"` string FPP expects in a ping packet's ranges field. */
-    fun rangesString(): String = "${startChannelZeroBased}-${channelCount}"
+    /**
+     * The channel range this device claims, as FPP writes it into a ping packet.
+     *
+     * Both ends are zero-based and inclusive — FPP builds it as
+     * `snprintf("%d-%d", start, start + count - 1)` (`MultiSync.cpp`, `createRanges`). A count in
+     * the second position happens to look right when the start channel is 1 and is nonsense
+     * otherwise: start channel 10001 with 6144 channels would advertise "10000-6144", which every
+     * reader parses as a negative span.
+     */
+    fun rangesString(): String {
+        val first = startChannelZeroBased
+        return "$first-${first + channelCount - 1}"
+    }
 
     fun validated(): MatrixConfig = copy(
         width = width.coerceIn(1, MAX_DIMENSION),
@@ -205,6 +223,7 @@ data class MatrixConfig(
         put("pixelStyle", pixelStyle.name)
         put("pixelGapPercent", pixelGapPercent)
         put("multiSyncEnabled", multiSyncEnabled)
+        put("ddpEnabled", ddpEnabled)
         put("hostname", hostname)
         put("autoFetchSequences", autoFetchSequences)
         put("masterHost", masterHost)
@@ -270,6 +289,7 @@ data class MatrixConfig(
             pixelStyle = enumOr(o.optString("pixelStyle"), base.pixelStyle),
             pixelGapPercent = o.optInt("pixelGapPercent", base.pixelGapPercent),
             multiSyncEnabled = o.optBoolean("multiSyncEnabled", base.multiSyncEnabled),
+            ddpEnabled = o.optBoolean("ddpEnabled", base.ddpEnabled),
             hostname = o.optString("hostname", base.hostname),
             autoFetchSequences = o.optBoolean("autoFetchSequences", base.autoFetchSequences),
             masterHost = o.optString("masterHost", base.masterHost),

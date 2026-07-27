@@ -33,7 +33,7 @@ class MatrixPlayer(
     private val store: SequenceStore,
     private val view: MatrixSurfaceView,
     initialConfig: MatrixConfig
-) : MultiSyncListener {
+) : MultiSyncListener, app.fppvm.tv.proto.DdpListener {
 
     companion object {
         private const val TAG = "FppMatrixPlayer"
@@ -41,14 +41,21 @@ class MatrixPlayer(
         /** Blank the panel if the master goes quiet for this long mid-sequence. */
         const val MASTER_TIMEOUT_MS = 10_000L
 
+        /**
+         * Give up on live DDP after this long. Much shorter than the master timeout: DDP is a
+         * continuous stream at the sequencer's frame rate, so a gap this long means the sequencer
+         * stopped rather than that a packet went missing.
+         */
+        const val DDP_TIMEOUT_MS = 2_000L
+
         /** Idle repaint cadence (test pattern / status). */
         private const val IDLE_FRAME_MS = 50L
     }
 
     enum class State { IDLE, WAITING_FOR_FILE, PLAYING, BLANKED, ERROR }
 
-    /** Where the timing is coming from. */
-    enum class Source { MASTER, LOCAL }
+    /** Where the pixels are coming from. */
+    enum class Source { MASTER, LOCAL, DDP }
 
     data class Status(
         val state: State = State.IDLE,
@@ -72,6 +79,7 @@ class MatrixPlayer(
         val message: String = "",
         val source: Source = Source.MASTER,
         val loop: Boolean = false,
+        val ddp: app.fppvm.tv.proto.DdpStats = app.fppvm.tv.proto.DdpStats(),
         /** Solved panel layout, when panel simulation is on. Null otherwise. */
         val panel: PanelGeometry? = null,
         val multiSync: MultiSyncStats = MultiSyncStats()
@@ -142,6 +150,29 @@ class MatrixPlayer(
     @Volatile
     private var localLoop = true
 
+    /**
+     * Live channel data pushed straight at us, with no sequence behind it.
+     *
+     * The receive thread fills this while the playback thread paints from it. A frame can therefore
+     * tear if a push lands mid-paint — which is the same bargain every DMX-style device makes, and
+     * is the right one here: the alternative is a copy of the whole matrix on every packet.
+     */
+    @Volatile
+    private var ddpBuffer = ByteArray(initialConfig.channelCount)
+
+    @Volatile
+    private var ddpLastDataMs = 0L
+
+    @Volatile
+    private var ddpSender = ""
+
+    /**
+     * Lets a push wake the playback thread immediately instead of waiting out the idle tick.
+     * Explicitly a `java.lang.Object`: Kotlin hides `wait`/`notifyAll` on [Any].
+     */
+    private val ddpWake = java.lang.Object()
+    private var ddpFrameReady = false
+
     @Volatile
     private var status = Status()
 
@@ -181,6 +212,7 @@ class MatrixPlayer(
         raster.reconfigure(next)
         testPattern.reconfigure(next)
         if (frameBuffer.size != next.channelCount) frameBuffer = ByteArray(next.channelCount)
+        if (ddpBuffer.size != next.channelCount) ddpBuffer = ByteArray(next.channelCount)
         view.setConfig(next)
         view.requestLowColorSurface(next.useLowColor || next.panelEnabled)
         resolvePanel()
@@ -250,6 +282,74 @@ class MatrixPlayer(
 
     override fun onStats(stats: MultiSyncStats) {
         status = status.copy(multiSync = stats)
+    }
+
+    // ---------------------------------------------------------------- DDP (live output)
+
+    /**
+     * Live channel data from a sequencer.
+     *
+     * [offset] is an absolute zero-based channel index, so it is shifted into this matrix's slice
+     * before being stored. Data addressed outside the slice is not an error — a sequencer pushes
+     * the whole show and every controller takes its own part — so the overlap is copied and the
+     * rest dropped without complaint.
+     */
+    override fun onDdpData(offset: Int, buf: ByteArray, start: Int, length: Int, sourceIp: String) {
+        val dst = ddpBuffer
+        var d = offset - config.startChannelZeroBased
+        var s = start
+        var n = length
+        if (d < 0) {
+            val skip = -d
+            if (skip >= n) return
+            s += skip
+            n -= skip
+            d = 0
+        }
+        if (d >= dst.size) return
+        if (d + n > dst.size) n = dst.size - d
+        if (n <= 0) return
+        System.arraycopy(buf, s, dst, d, n)
+        ddpSender = sourceIp
+        ddpLastDataMs = System.currentTimeMillis()
+    }
+
+    override fun onDdpPush(sourceIp: String) {
+        ddpSender = sourceIp
+        ddpLastDataMs = System.currentTimeMillis()
+        synchronized(ddpWake) {
+            ddpFrameReady = true
+            ddpWake.notifyAll()
+        }
+    }
+
+    override fun onDdpStats(stats: app.fppvm.tv.proto.DdpStats) {
+        status = status.copy(ddp = stats)
+    }
+
+    /** True while a sequencer is actively driving this panel. */
+    private fun ddpActive(nowMs: Long): Boolean =
+        ddpLastDataMs != 0L && nowMs - ddpLastDataMs < DDP_TIMEOUT_MS
+
+    /**
+     * Waits for the next push, or for the idle tick, whichever comes first.
+     *
+     * Sleeping a fixed interval would cap live output at 20 fps no matter how fast the sequencer
+     * sends; the timeout is only there so a config change and the source going quiet are still
+     * noticed promptly.
+     */
+    private fun awaitDdpFrame() {
+        synchronized(ddpWake) {
+            if (!ddpFrameReady) {
+                try {
+                    ddpWake.wait(IDLE_FRAME_MS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return
+                }
+            }
+            ddpFrameReady = false
+        }
     }
 
     // ---------------------------------------------------------------- local playback
@@ -419,6 +519,8 @@ class MatrixPlayer(
 
     private var decodeMsAvg = 0.0
     private var paintMsAvg = 0.0
+    /** Playback-thread only: whether the last pass painted live data, so transitions publish once. */
+    private var ddpDriving = false
     private var lastFps = 0f
     private var fpsWindow = 0
     private var fpsWindowStart = 0L
@@ -520,11 +622,28 @@ class MatrixPlayer(
                     publish(status.copy(state = State.IDLE, frame = -1, message = "master silent"))
                 }
                 lastFrame = Int.MIN_VALUE
-                renderIdle(cfg, System.currentTimeMillis() - startedAt)
-                try {
-                    Thread.sleep(IDLE_FRAME_MS)
-                } catch (e: InterruptedException) {
-                    return
+                val nowMs = System.currentTimeMillis()
+                // Live output outranks the idle pattern, and outranks a blank: a sequencer pushing
+                // frames at this panel is someone standing in front of it, right now, expecting to
+                // see what they are building.
+                if (ddpActive(nowMs)) {
+                    if (!ddpDriving) {
+                        ddpDriving = true
+                        publish(status.copy(state = State.PLAYING, sequence = "", frame = -1, message = "live from $ddpSender"))
+                    }
+                    paintChannels(cfg, ddpBuffer)
+                    awaitDdpFrame()
+                } else {
+                    if (ddpDriving) {
+                        ddpDriving = false
+                        publish(status.copy(state = State.IDLE, frame = -1, message = "live output stopped"))
+                    }
+                    renderIdle(cfg, nowMs - startedAt)
+                    try {
+                        Thread.sleep(IDLE_FRAME_MS)
+                    } catch (e: InterruptedException) {
+                        return
+                    }
                 }
             }
         }
@@ -534,18 +653,7 @@ class MatrixPlayer(
         // BLANKED came from the master telling the show to go dark. Honour it over idleMode.
         val mode = if (status.state == State.BLANKED) MatrixConfig.IdleMode.BLACK else cfg.idleMode
         when (mode) {
-            MatrixConfig.IdleMode.TEST_PATTERN -> {
-                val data = testPattern.render(elapsedMs)
-                val geo = panelGeometry
-                if (geo != null) {
-                    val gp = raster.renderGrid(data, geo.cols, geo.rows, cfg.downsample)
-                    view.presentPanel(gp, raster.packGridTo565(geo.cols * geo.rows), geo, cfg.bloomPercent)
-                } else if (cfg.useLowColor) {
-                    view.present565(raster.render565(data), raster.width, raster.height)
-                } else {
-                    view.present(raster.render(data), raster.width, raster.height)
-                }
-            }
+            MatrixConfig.IdleMode.TEST_PATTERN -> paintChannels(cfg, testPattern.render(elapsedMs))
             MatrixConfig.IdleMode.STATUS -> {
                 view.statusText = describeIdle()
                 view.presentBlank()
@@ -557,6 +665,22 @@ class MatrixPlayer(
                     view.present(raster.blank(), raster.width, raster.height)
                 }
             }
+        }
+    }
+
+    /**
+     * Paints one frame of channel data through whichever of the three output paths is configured:
+     * the panel simulation, the packed 16-bit path, or plain ARGB.
+     */
+    private fun paintChannels(cfg: MatrixConfig, data: ByteArray): Boolean {
+        val geo = panelGeometry
+        return if (geo != null) {
+            val px = raster.renderGrid(data, geo.cols, geo.rows, cfg.downsample)
+            view.presentPanel(px, raster.packGridTo565(geo.cols * geo.rows), geo, cfg.bloomPercent)
+        } else if (cfg.useLowColor) {
+            view.present565(raster.render565(data), raster.width, raster.height)
+        } else {
+            view.present(raster.render(data), raster.width, raster.height)
         }
     }
 
@@ -602,7 +726,11 @@ class MatrixPlayer(
      */
     private fun publish(next: Status) {
         val derived = next.copy(
-            source = if (localPlayback) Source.LOCAL else Source.MASTER,
+            source = when {
+                localPlayback -> Source.LOCAL
+                ddpActive(System.currentTimeMillis()) -> Source.DDP
+                else -> Source.MASTER
+            },
             panel = panelGeometry
         )
         status = derived

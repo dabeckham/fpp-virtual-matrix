@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: SequenceStore
     private lateinit var player: MatrixPlayer
     private var client: MultiSyncClient? = null
+    private var ddp: app.fppvm.tv.proto.DdpReceiver? = null
     private var web: WebConfigServer? = null
     private var focusGuard: FocusGuard? = null
     private var storageWatcher: android.content.BroadcastReceiver? = null
@@ -45,6 +46,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configStore = ConfigStore(this)
+        // Saved profiles live in preferences, which the pure profile library cannot reach. Install
+        // the lookup before anything resolves a profile id, or your own profiles silently do
+        // nothing and every one of them reports as modified.
+        app.fppvm.tv.panel.LedProfiles.userProfiles = { app.fppvm.tv.web.ProfileStore(this).load() }
         config = applyIntentOverride(intent) ?: configStore.load()
 
         matrixView = MatrixSurfaceView(this)
@@ -147,6 +152,7 @@ class MainActivity : ComponentActivity() {
         publishSurfaceMetrics()
         player.start()
         startMultiSync()
+        startDdp()
         updateOverlay()
     }
 
@@ -157,6 +163,8 @@ class MainActivity : ComponentActivity() {
         focusGuard?.onFocusLost()
         client?.stop()
         client = null
+        ddp?.stop()
+        ddp = null
         player.stop()
     }
 
@@ -185,7 +193,8 @@ class MainActivity : ComponentActivity() {
                 onBringToFront = { bringToFront() },
                 storageJson = { storageJson() },
                 onPlayLocal = { name, loop -> player.playLocal(name, loop) },
-                onStopLocal = { player.stopLocal() }
+                onStopLocal = { player.stopLocal() },
+                channelOutputsJson = { channelOutputsJson() }
             )
             s.password = config.webPassword
             s.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
@@ -211,9 +220,14 @@ class MainActivity : ComponentActivity() {
             put("resyncJumps", st.resyncJumps)
             put("master", st.multiSync.lastMaster)
             put("syncPackets", st.syncPackets)
+            put("ddpEnabled", config.ddpEnabled)
+            put("ddpListening", ddp?.isRunning() == true)
+            put("ddpPackets", st.ddp.packets)
+            put("ddpPushes", st.ddp.pushes)
+            put("ddpSender", st.ddp.lastSender)
             // Header fields, mirroring what FPP's own status API exposes.
             put("host_name", config.hostname.ifBlank { defaultHostname() })
-            put("host_description", "Android TV Virtual Matrix")
+            put("host_description", HOST_DESCRIPTION)
             put("platform", "Android " + Build.VERSION.RELEASE)
             put("version", BuildInfo.VERSION)
             put("mode_name", "remote")
@@ -275,7 +289,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun identityJson(): JSONObject = JSONObject().apply {
         put("HostName", config.hostname.ifBlank { defaultHostname() })
-        put("HostDescription", "Android TV Virtual Matrix")
+        put("HostDescription", HOST_DESCRIPTION)
         put("Platform", "Android")
         put("Variant", Build.MODEL)
         put("Mode", "remote")
@@ -286,7 +300,56 @@ class MainActivity : ComponentActivity() {
         put("channelRanges", config.rangesString())
         put("IPs", org.json.JSONArray().put(client?.localIpv4() ?: "0.0.0.0"))
         put("multisync", config.multiSyncEnabled)
+        // Mandatory. A reader with no UUID abandons the whole exchange and marks the device as
+        // unreachable over HTTP, which then excludes it from FPP Connect entirely.
+        put("uuid", deviceUuid())
+        put("UUID", deviceUuid())
+        // Names the output so a reader resolves this to its existing FPP / Virtual Matrix entry
+        // rather than leaving the model blank.
+        put("capeInfo", JSONObject().put("id", FPP_MODEL).put("name", FPP_MODEL).put("vendor", FPP_VENDOR))
     }
+
+    /**
+     * FPP's channel-output configuration, reduced to the one output this device has.
+     *
+     * xLights reads this to work out what kind of controller it is talking to: an entry of type
+     * `VirtualMatrix` is what makes it choose the FPP / Virtual Matrix capability entry it already
+     * ships, which is exactly what this is.
+     */
+    private fun channelOutputsJson(): JSONObject = JSONObject().apply {
+        put(
+            "channelOutputs",
+            org.json.JSONArray().put(
+                JSONObject()
+                    .put("type", "VirtualMatrix")
+                    .put("enabled", 1)
+                    .put("startChannel", config.startChannel)
+                    .put("channelCount", config.channelCount)
+                    .put("width", config.width)
+                    .put("height", config.height)
+                    .put("device", "Android TV")
+            )
+        )
+    }
+
+    /**
+     * Stable per install, and derived rather than stored so it survives a cleared preferences file
+     * without the device appearing to be a different one.
+     */
+    private fun deviceUuid(): String = cachedUuid ?: synchronized(this) {
+        cachedUuid ?: run {
+            val androidId = try {
+                android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            } catch (t: Throwable) {
+                null
+            } ?: Build.FINGERPRINT
+            java.util.UUID.nameUUIDFromBytes("fppvm:$androidId".toByteArray()).toString()
+                .also { cachedUuid = it }
+        }
+    }
+
+    @Volatile
+    private var cachedUuid: String? = null
 
     override fun onDestroy() {
         super.onDestroy()
@@ -305,6 +368,27 @@ class MainActivity : ComponentActivity() {
         }
         storageWatcher = null
         if (APP_PLAYER === player) APP_PLAYER = null
+    }
+
+    /**
+     * Live output from a sequencer, plus the discovery reply that gives this device a vendor and
+     * model in xLights. That reply is the only route to those columns: for anything identifying as
+     * a full FPP instance xLights fills them from HTTP on port 80, which an Android app cannot bind.
+     */
+    private fun startDdp() {
+        if (!config.ddpEnabled) return
+        val r = app.fppvm.tv.proto.DdpReceiver(
+            identity = {
+                app.fppvm.tv.proto.DdpReceiver.Identity(
+                    manufacturer = FPP_VENDOR,
+                    model = FPP_MODEL,
+                    version = BuildInfo.VERSION
+                )
+            },
+            listener = player
+        )
+        ddp = r
+        r.start()
     }
 
     private fun startMultiSync() {
@@ -329,7 +413,11 @@ class MainActivity : ComponentActivity() {
         return FppCodec.Identity(
             hostname = name,
             version = "${BuildInfo.NAME} ${BuildInfo.VERSION}",
-            model = "Android TV Virtual Matrix (${Build.MODEL})",
+            // The hardware, not the function. This field sits beside "Raspberry Pi 4 Model B" and
+            // "BeagleBone Black" in a player's system list, and FPP maps it back to a system type,
+            // so it answers "what is this box". What it *does* is carried by the model name in the
+            // DDP status reply and by the channel-output type over HTTP.
+            model = "Android TV (${Build.MODEL})".take(40),
             ranges = config.rangesString(),
             ipv4 = client?.localIpv4() ?: "0.0.0.0"
         )
@@ -469,6 +557,19 @@ class MainActivity : ComponentActivity() {
 
         @Volatile
         var APP_CLIENT: MultiSyncClient? = null
+
+        /**
+         * How this device names itself to xLights.
+         *
+         * These two strings are not decoration — they are looked up. xLights ships a capability
+         * entry for vendor "FPP", controller "Virtual Matrix", and matching it is what fills the
+         * Vendor and Model columns and gives the controller the right capabilities. Anything else,
+         * however accurate, leaves those columns empty.
+         */
+        const val FPP_VENDOR = "FPP"
+        const val FPP_MODEL = "Virtual Matrix"
+
+        const val HOST_DESCRIPTION = "Android TV Virtual Matrix"
     }
 }
 

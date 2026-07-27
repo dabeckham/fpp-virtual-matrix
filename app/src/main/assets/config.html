@@ -5,16 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>FPP Virtual Matrix</title>
 <style>
-:root { color-scheme: dark; --bg:#0d0f12; --card:#171a1f; --line:#262b33; --fg:#e8eaed; --dim:#9aa0a6; --accent:#4da3ff; --warn:#ffb86b; }
+:root { color-scheme: dark; --bg:#0d0f12; --card:#171a1f; --line:#262b33; --fg:#e8eaed; --dim:#9aa0a6; --accent:#4da3ff; --warn:#ffb86b; --bad:#ff7b7b; }
 * { box-sizing:border-box; }
-body { margin:0; padding:14px 14px 40px; background:var(--bg); color:var(--fg);
+body { margin:0; padding:14px 14px 96px; background:var(--bg); color:var(--fg);
        font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
 .hdr { display:flex; gap:10px; align-items:center; background:var(--card); border:1px solid var(--line);
         border-radius:10px; padding:10px 12px; margin-bottom:8px; flex-wrap:wrap; }
 .hdr-l { flex:1 1 40%; min-width:0; } .hdr-c { flex:1 1 30%; min-width:0; } .hdr-r { flex:0 1 auto; text-align:right; }
 .host { font-size:16px; font-weight:600; }
 .stat { font-size:15px; font-weight:600; color:var(--accent); }
-.stat.idle { color:var(--dim); } .stat.err { color:#ff7b7b; } .stat.blank { color:var(--warn); }
+.stat.idle { color:var(--dim); } .stat.err { color:var(--bad); } .stat.blank { color:var(--warn); }
 .desc { font-size:12px; color:var(--dim); word-break:break-word; }
 .sub { color:var(--dim); font-size:13px; margin-bottom:14px; }
 .tabs { display:flex; gap:6px; margin-bottom:14px; position:sticky; top:0; background:var(--bg); padding:6px 0; z-index:5; }
@@ -35,8 +35,9 @@ input.num { flex:0 0 82px; text-align:right; font-variant-numeric:tabular-nums; 
 select, input.wide { flex:1; }
 button { background:var(--accent); color:#06121f; border:0; border-radius:7px; padding:11px 14px;
          font-size:15px; font-weight:600; }
+button:disabled { opacity:.4; }
 button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
-button.danger { background:transparent; color:#ff7b7b; border:1px solid #4a2a2a; padding:7px 11px; font-size:13px; }
+button.danger { background:transparent; color:var(--bad); border:1px solid #4a2a2a; }
 button.sm { padding:7px 11px; font-size:13px; }
 .btns { display:flex; gap:8px; flex-wrap:wrap; }
 pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:pre-wrap; word-break:break-word; }
@@ -45,9 +46,25 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
 .file { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:13px; }
 .file:last-child { border-bottom:0; }
 .file .n { flex:1; word-break:break-all; }
-.file .s { color:var(--dim); font-variant-numeric:tabular-nums; }
+.file .s { color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.file input[type=checkbox] { flex:0 0 auto; width:20px; height:20px; accent-color:var(--accent); }
 .bar { height:6px; background:#0f1216; border-radius:3px; overflow:hidden; margin-top:5px; }
-.bar i { display:block; height:100%; background:var(--accent); }
+.bar i { display:block; height:100%; background:var(--accent); transition:width .2s; }
+/* Location is shown by which group a file sits in, not by a tag on the row. */
+.vol { display:flex; align-items:baseline; gap:8px; margin:16px 0 4px; padding-top:12px; border-top:1px solid var(--line); }
+.vol:first-child { margin-top:0; padding-top:0; border-top:0; }
+.vol .vn { font-size:14px; font-weight:600; }
+.vol .vf { font-size:12px; color:var(--dim); }
+.playing { color:var(--accent); font-weight:600; }
+/* Only appears with a selection, so the common case stays uncluttered. */
+.actions { position:fixed; left:0; right:0; bottom:0; z-index:9; background:var(--card);
+           border-top:1px solid var(--line); padding:10px 14px; display:none;
+           gap:8px; align-items:center; flex-wrap:wrap; }
+.actions.on { display:flex; }
+.actions .count { flex:0 0 auto; font-size:13px; color:var(--dim); }
+.actions select { flex:1 1 140px; }
+.drop { border:1px dashed var(--line); border-radius:9px; padding:16px; text-align:center; color:var(--dim); font-size:13px; }
+.drop.over { border-color:var(--accent); color:var(--fg); }
 @media (max-width:520px) { label { flex-basis:88px; font-size:13px; } input.num { flex-basis:72px; } }
 </style>
 </head>
@@ -118,14 +135,29 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
   </div>
 
   <div class="card">
-    <h2>Save as a profile</h2>
+    <h2>My profiles</h2>
     <div class="row"><label for="newName">Name</label><input class="wide" type="text" id="newName" placeholder="e.g. P10 round, my roofline"></div>
-    <div class="btns"><button id="save">Save profile</button><button class="ghost" id="reload">Reload</button></div>
+    <div class="btns">
+      <button id="saveOver" disabled>Save changes</button>
+      <button class="ghost" id="saveAs">Save as new</button>
+      <button class="danger" id="deleteProfile" disabled>Delete</button>
+      <button class="ghost" id="reload">Reload</button>
+    </div>
+    <div class="achieved" id="profileNote"></div>
   </div>
 </div>
 
 <!-- ── Show: channels and sync. FPP's vocabulary, so it reads the same as the player. ── -->
 <div class="pane" id="show">
+  <div class="card">
+    <h2>Identity</h2>
+    <div class="row">
+      <label for="hostname">Host name</label>
+      <input class="wide" type="text" id="hostname" placeholder="leave blank to use the device name">
+    </div>
+    <div class="desc" id="hostNote">This is the name the player and xLights list this device under.</div>
+  </div>
+
   <div class="card">
     <h2>Channels</h2>
     <div class="row"><label>Start channel</label><input class="num wide" type="number" id="startChannel" min="1"></div>
@@ -142,9 +174,14 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
   </div>
 
   <div class="card">
-    <h2>MultiSync</h2>
+    <h2>Inputs</h2>
     <div class="row"><label>Sync offset (ms)</label><input class="num wide" type="number" id="remoteOffsetMs" step="10"></div>
     <div class="row"><label for="autoFetchSequences">Auto-fetch</label><select id="autoFetchSequences"><option value="true">Pull from the master</option><option value="false">Off</option></select></div>
+    <div class="row">
+      <label for="ddpEnabled">Live output</label>
+      <select id="ddpEnabled"><option value="true">Accept DDP on 4048</option><option value="false">Off</option></select>
+    </div>
+    <div class="desc" id="ddpNote"></div>
   </div>
 
   <div class="card">
@@ -173,23 +210,47 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
     <div class="row"><label for="preferRemovableStorage">Use USB</label><select id="preferRemovableStorage"><option value="true">When a stick is plugged in</option><option value="false">Always internal</option></select></div>
     <div id="volumes"></div>
   </div>
+
+  <div class="card">
+    <h2>Upload</h2>
+    <div class="drop" id="drop">
+      Drop .fseq files here, or
+      <button class="ghost sm" id="pick">choose files</button>
+      <input type="file" id="fileInput" multiple accept=".fseq,.eseq" hidden>
+      <div class="desc" id="uploadTarget"></div>
+    </div>
+    <div class="bar" id="uploadBar" style="display:none"><i style="width:0"></i></div>
+    <div class="desc" id="uploadNote"></div>
+  </div>
+
   <div class="card">
     <h2>Sequences</h2>
-    <div class="btns" style="margin-bottom:10px"><button class="ghost" id="stopLocal">Stop local playback</button></div>
     <div id="fileList"><span class="sub">…</span></div>
   </div>
+</div>
+
+<div class="actions" id="actions">
+  <span class="count" id="selCount">0 selected</span>
+  <select id="moveTo"></select>
+  <button class="ghost sm" id="doMove">Move</button>
+  <button class="danger sm" id="doDelete">Delete</button>
+  <button class="ghost sm" id="clearSel">Clear</button>
 </div>
 
 <script>
 // Slider and number box are two views of one value; keep them in step without echoing.
 const NUM = ["pitchMm","emitterMm","louvrePercent","bloomPercent","brightness","gamma","panelDpi"];
 const PLAIN = ["width","height","startChannel","remoteOffsetMs"];
+const TEXT = ["hostname"];
 const SEL = ["emitterShape","substrateColor","downsample","panelMode","colorOrder",
-             "holdFocus","showOverlay","autoFetchSequences","preferRemovableStorage","idleMode"];
+             "holdFocus","showOverlay","autoFetchSequences","preferRemovableStorage","idleMode","ddpEnabled"];
 const DEC = { pitchMm:2, emitterMm:2, gamma:2 };
 let cfg = {}, sending = false, queued = null;
+let profiles = [], volumes = [], files = [], lastStatus = {};
+const selected = new Set();
 
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (k,v) => k in DEC ? Number(v).toFixed(DEC[k]) : String(v);
 const bytes = b => b >= 1073741824 ? (b/1073741824).toFixed(1)+" GB"
                  : b >= 1048576 ? (b/1048576).toFixed(0)+" MB"
@@ -203,8 +264,10 @@ function paint() {
     if (n && document.activeElement !== n) n.value = fmt(k, cfg[k]);
   }
   for (const k of PLAIN) { const e = $(k); if (e && k in cfg && document.activeElement !== e) e.value = cfg[k]; }
+  for (const k of TEXT) { const e = $(k); if (e && k in cfg && document.activeElement !== e) e.value = cfg[k]; }
   for (const k of SEL) { const e = $(k); if (e && k in cfg) e.value = String(cfg[k]); }
   $("sub").textContent = (cfg.profileLabel || "") + " · " + (cfg.width||"?") + "x" + (cfg.height||"?");
+  paintProfileButtons();
 }
 
 async function push(patch) {
@@ -234,108 +297,310 @@ for (const k of NUM) {
 }
 for (const k of PLAIN) { const e = $(k); if (e) e.addEventListener("change", () => push({ [k]: Number(e.value) })); }
 for (const k of SEL) { const e = $(k); if (e) e.addEventListener("change", () => push({ [k]: asBool(e.value) })); }
+for (const k of TEXT) {
+  const e = $(k); if (!e) continue;
+  e.addEventListener("change", () => push({ [k]: e.value.trim() }));
+  e.addEventListener("keydown", ev => { if (ev.key === "Enter") e.blur(); });
+}
 
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
   document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === b.dataset.t));
-  if (b.dataset.t === "files") loadFiles();
+  if (b.dataset.t === "files") loadFiles(); else clearSelection();
 }));
 
+// ── profiles ──────────────────────────────────────────────────────────────────
 $("profile").addEventListener("change", () => push({ profileId: $("profile").value, applyProfile: true }));
 $("reload").addEventListener("click", load);
-$("stopLocal").addEventListener("click", async () => { await fetch("api/stop", { method:"POST" }); poll(); });
+
+const currentProfile = () => profiles.find(p => p.id === cfg.profileId);
+const profileBody = (id, label) => ({
+  id: id, label: label, pitchMm: cfg.pitchMm, emitterMm: cfg.emitterMm, shape: cfg.emitterShape,
+  substrate: cfg.substrateColor, louvrePercent: cfg.louvrePercent, bloomPercent: cfg.bloomPercent,
+  packageName: (currentProfile() || {}).packageName || "", builtIn: false
+});
+
+function paintProfileButtons() {
+  const p = currentProfile();
+  const mine = !!p && !p.builtIn;
+  $("saveOver").disabled = !mine;
+  $("deleteProfile").disabled = !mine;
+  $("saveOver").textContent = mine ? 'Save changes to "' + p.label + '"' : "Save changes";
+  $("profileNote").textContent = p
+    ? (mine ? (cfg.profileEdited ? "Edited — Save changes updates this profile." : "Your profile.")
+            : "Built-in. Edits go to a new profile with Save as new.")
+    : "";
+}
+
+$("saveOver").addEventListener("click", async () => {
+  const p = currentProfile(); if (!p || p.builtIn) return;
+  const label = $("newName").value.trim() || p.label;
+  await fetch("api/profiles", { method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify(profileBody(p.id, label)) });
+  $("newName").value = "";
+  await load();
+});
+
+$("saveAs").addEventListener("click", async () => {
+  const name = $("newName").value.trim();
+  if (!name) { $("profileNote").textContent = "Give it a name first."; return; }
+  const id = "user_" + name.toLowerCase().replace(/[^a-z0-9]+/g,"_");
+  await fetch("api/profiles", { method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify(profileBody(id, name)) });
+  $("newName").value = "";
+  await load();
+  // Select what was just saved, so the next edit lands on it rather than on the original.
+  await push({ profileId: id, applyProfile: true });
+  await load();
+});
+
+$("deleteProfile").addEventListener("click", async () => {
+  const p = currentProfile(); if (!p || p.builtIn) return;
+  if (!confirm('Delete the profile "' + p.label + '"?')) return;
+  await fetch("api/profiles/" + encodeURIComponent(p.id), { method:"DELETE" });
+  await load();
+  $("profileNote").textContent = "Deleted. The panel keeps its current look.";
+});
+
 $("focus").addEventListener("click", async () => {
   await fetch("api/focus", { method:"POST" });
   $("focusNote").textContent = "asked the TV to bring the show forward";
 });
-$("save").addEventListener("click", async () => {
-  const name = $("newName").value.trim(); if (!name) return;
-  await fetch("api/profiles", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
-    id: "user_" + name.toLowerCase().replace(/[^a-z0-9]+/g,"_"), label: name,
-    pitchMm: cfg.pitchMm, emitterMm: cfg.emitterMm, shape: cfg.emitterShape,
-    substrate: cfg.substrateColor, louvrePercent: cfg.louvrePercent,
-    bloomPercent: cfg.bloomPercent, builtIn: false })});
-  $("newName").value = ""; load();
-});
 
 async function load() {
   cfg = await (await fetch("api/config")).json();
-  const profiles = await (await fetch("api/profiles")).json();
+  profiles = await (await fetch("api/profiles")).json();
   const sel = $("profile"); sel.innerHTML = "";
   for (const p of profiles) {
     const o = document.createElement("option");
-    o.value = p.id; o.textContent = p.label + (p.packageName ? "  (" + p.packageName + ")" : "");
+    o.value = p.id;
+    o.textContent = (p.builtIn ? "" : "★ ") + p.label + (p.packageName ? "  (" + p.packageName + ")" : "");
     sel.appendChild(o);
   }
   sel.value = cfg.profileId || ""; paint();
 }
 
+// ── file manager ──────────────────────────────────────────────────────────────
+const volumeOf = f => volumes.find(v => (f.path || "").indexOf(v.path + "/") === 0);
+
+function clearSelection() { selected.clear(); paintActions(); }
+
+function paintActions() {
+  $("actions").classList.toggle("on", selected.size > 0);
+  $("selCount").textContent = selected.size + " selected";
+  document.querySelectorAll("[data-sel]").forEach(c => { c.checked = selected.has(c.dataset.sel); });
+}
+
+function isPlaying(name) {
+  return lastStatus.source === "LOCAL" && lastStatus.current_sequence === name &&
+         (lastStatus.status_name || "").toLowerCase() === "playing";
+}
+
+function renderFiles() {
+  const target = volumes.find(v => v.active);
+  $("uploadTarget").textContent = target ? "Uploads land on " + target.label : "";
+
+  $("moveTo").innerHTML = volumes.map(v =>
+    '<option value="' + esc(v.path) + '">Move to ' + esc(v.label) + '</option>').join("");
+
+  if (!files.length) { $("fileList").innerHTML = '<span class="sub">no sequences yet</span>'; paintActions(); return; }
+
+  // Grouped by volume: where a file lives is shown by which group it is in, so moving it is
+  // "put it in that group" rather than decoding an arrow on a button.
+  let html = "";
+  for (const v of volumes) {
+    const mine = files.filter(f => volumeOf(f) === v);
+    html += '<div class="vol"><span class="vn">' + esc(v.label) + '</span>' +
+            '<span class="vf">' + bytes(v.freeBytes) + ' free · ' + mine.length + ' file' +
+            (mine.length === 1 ? '' : 's') + (v.active ? ' · active' : '') + '</span></div>';
+    if (!mine.length) { html += '<div class="file"><span class="n desc">empty</span></div>'; continue; }
+    for (const f of mine) {
+      const n = esc(f.name);
+      html += '<div class="file">' +
+        '<input type="checkbox" data-sel="' + n + '">' +
+        '<span class="n' + (isPlaying(f.name) ? ' playing' : '') + '">' + n + '</span>' +
+        '<span class="s">' + bytes(f.size) + '</span>' +
+        '<button class="ghost sm" data-play="' + n + '">' + (isPlaying(f.name) ? 'Stop' : 'Play') + '</button>' +
+        '</div>';
+    }
+  }
+  // Anything whose volume has gone away still has to be reachable.
+  const orphans = files.filter(f => !volumeOf(f));
+  if (orphans.length) {
+    html += '<div class="vol"><span class="vn">Elsewhere</span></div>';
+    for (const f of orphans) {
+      const n = esc(f.name);
+      html += '<div class="file"><input type="checkbox" data-sel="' + n + '">' +
+              '<span class="n">' + n + '</span><span class="s">' + bytes(f.size) + '</span>' +
+              '<button class="ghost sm" data-play="' + n + '">Play</button></div>';
+    }
+  }
+  $("fileList").innerHTML = html;
+
+  document.querySelectorAll("[data-sel]").forEach(c => c.addEventListener("change", () => {
+    if (c.checked) selected.add(c.dataset.sel); else selected.delete(c.dataset.sel);
+    paintActions();
+  }));
+  document.querySelectorAll("[data-play]").forEach(b => b.addEventListener("click", async () => {
+    const name = b.dataset.play;
+    if (isPlaying(name)) {
+      await fetch("api/stop", { method:"POST" });
+    } else {
+      await fetch("api/play", { method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify({ name: name, loop: true }) });
+    }
+    await poll();
+    renderFiles();
+  }));
+  paintActions();
+}
+
 async function loadFiles() {
   try {
     const st = await (await fetch("api/storage")).json();
-    $("volumes").innerHTML = (st.volumes || []).map(v => {
+    volumes = st.volumes || [];
+    $("volumes").innerHTML = volumes.map(v => {
       const used = v.totalBytes ? Math.round(100 - v.freeBytes / v.totalBytes * 100) : 0;
-      return '<div class="file"><span class="n">' + v.label + (v.active ? " — active" : "") +
+      return '<div class="file"><span class="n">' + esc(v.label) + (v.active ? " — active" : "") +
              '</span><span class="s">' + bytes(v.freeBytes) + ' free</span></div>' +
              '<div class="bar"><i style="width:' + used + '%"></i></div>';
     }).join("") || '<span class="sub">no volumes</span>';
 
     const f = await (await fetch("api/files/sequences")).json();
-    const list = f.files || [];
-    $("fileList").innerHTML = list.length ? list.map(x => {
-      const e = encodeURIComponent(x.name);
-      const onUsb = (x.path || "").indexOf("/storage/") === 0;
-      return '<div class="file"><span class="n">' + x.name +
-        (onUsb ? ' <span class="s">· USB</span>' : '') +
-        '</span><span class="s">' + bytes(x.size) + '</span>' +
-        '<button class="ghost sm" data-p="' + e + '">Play</button>' +
-        '<button class="ghost sm" data-m="' + e + '" data-to="' + (onUsb ? 'internal' : 'usb') + '">' +
-          (onUsb ? '&rarr; TV' : '&rarr; USB') + '</button>' +
-        '<button class="danger" data-d="' + e + '">Delete</button></div>';
-    }).join("") : '<span class="sub">no sequences yet</span>';
-
-    document.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", async () => {
-      await fetch("api/file/sequences/" + b.dataset.d, { method:"DELETE" });
-      loadFiles();
-    }));
-    document.querySelectorAll("[data-p]").forEach(b => b.addEventListener("click", async () => {
-      await fetch("api/play", { method:"POST", headers:{"Content-Type":"application/json"},
-                                body: JSON.stringify({ name: decodeURIComponent(b.dataset.p), loop: true }) });
-      poll();
-    }));
-    document.querySelectorAll("[data-m]").forEach(b => b.addEventListener("click", async () => {
-      b.textContent = "…";
-      await fetch("api/move", { method:"POST", headers:{"Content-Type":"application/json"},
-                                body: JSON.stringify({ name: decodeURIComponent(b.dataset.m), to: b.dataset.to }) });
-      loadFiles();
-    }));
+    files = f.files || [];
+    // Drop selections for files that are gone, or a stale name gets moved or deleted later.
+    for (const n of Array.from(selected)) if (!files.some(x => x.name === n)) selected.delete(n);
+    renderFiles();
   } catch (e) { $("fileList").innerHTML = '<span class="sub">unavailable</span>'; }
 }
 
+$("clearSel").addEventListener("click", clearSelection);
+
+$("doMove").addEventListener("click", async () => {
+  if (!selected.size) return;
+  const dir = $("moveTo").value;
+  $("doMove").disabled = true;
+  try {
+    await fetch("api/move", { method:"POST", headers:{"Content-Type":"application/json"},
+                              body: JSON.stringify({ names: Array.from(selected), dir: dir }) });
+  } catch (e) {}
+  $("doMove").disabled = false;
+  clearSelection();
+  loadFiles();
+});
+
+$("doDelete").addEventListener("click", async () => {
+  if (!selected.size) return;
+  if (!confirm("Delete " + selected.size + " sequence" + (selected.size === 1 ? "" : "s") + "?")) return;
+  for (const n of Array.from(selected)) {
+    try { await fetch("api/file/sequences/" + encodeURIComponent(n), { method:"DELETE" }); } catch (e) {}
+  }
+  clearSelection();
+  loadFiles();
+});
+
+// ── upload ────────────────────────────────────────────────────────────────────
+$("pick").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", () => { uploadAll(Array.from($("fileInput").files)); $("fileInput").value = ""; });
+
+const drop = $("drop");
+["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add("over");
+}));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove("over");
+}));
+drop.addEventListener("drop", e => {
+  if (e.dataTransfer && e.dataTransfer.files) uploadAll(Array.from(e.dataTransfer.files));
+});
+
+async function uploadAll(list) {
+  if (!list.length) return;
+  $("uploadBar").style.display = "block";
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i];
+    $("uploadNote").textContent = "Sending " + f.name + " (" + (i+1) + " of " + list.length + ")…";
+    try {
+      await uploadOne(f);
+    } catch (err) {
+      $("uploadNote").textContent = f.name + " failed: " + err;
+      $("uploadBar").style.display = "none";
+      loadFiles();
+      return;
+    }
+  }
+  $("uploadBar").style.display = "none";
+  $("uploadNote").textContent = list.length + " file" + (list.length === 1 ? "" : "s") + " uploaded.";
+  loadFiles();
+}
+
+// XHR rather than fetch: these files run to hundreds of megabytes over wifi and a progress bar
+// is the difference between "working" and "hung".
+function uploadOne(file) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", "api/files/sequences/" + encodeURIComponent(file.name));
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) {
+        $("uploadBar").firstElementChild.style.width = Math.round(e.loaded / e.total * 100) + "%";
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      let msg = "HTTP " + xhr.status;
+      try { const j = JSON.parse(xhr.responseText); if (j.error) msg = j.error; } catch (e) {}
+      reject(msg);
+    };
+    xhr.onerror = () => reject("connection lost");
+    xhr.send(file);
+  });
+}
+
+// ── status ────────────────────────────────────────────────────────────────────
 async function poll() {
   try {
     const s = await (await fetch("api/status")).json();
+    lastStatus = s;
     $("status").textContent = Object.entries(s).filter(([k]) => k !== "panel")
       .map(([k,v]) => k.padEnd(20) + v).join("\n");
     $("h_host").textContent = s.host_name || "";
     $("h_desc").textContent = (s.host_description || "") + " · " + (s.platform || "") + " · v" + (s.version || "");
     const st = (s.status_name || "").toUpperCase();
     const el = $("h_status");
-    el.textContent = st + (s.source === "LOCAL" ? "  (local)" : "");
+    const src = s.source === "LOCAL" ? "  (local)" : s.source === "DDP" ? "  (live)" : "";
+    el.textContent = st + src;
     el.className = "stat" + (st === "PLAYING" ? "" : st === "BLANKED" ? " blank" : st === "ERROR" ? " err" : " idle");
     $("h_seq").textContent = s.current_sequence
       ? s.current_sequence + "  " + s.seconds_played + "s / " + (Number(s.seconds_played) + Number(s.seconds_remaining)) + "s"
-      : "no sequence";
+      : (s.source === "DDP" ? "live output" : "no sequence");
     $("h_time").textContent = s.time || "";
     const up = Number(s.uptimeSeconds || 0);
     $("h_up").textContent = "up " + Math.floor(up/3600) + "h " + Math.floor(up%3600/60) + "m";
+    $("ddpNote").textContent = s.ddpEnabled
+      ? (s.ddpListening ? "Listening on 4048" + (s.ddpSender ? " · last from " + s.ddpSender : "") +
+                          " · " + (s.ddpPackets || 0) + " packets"
+                        : "Enabled but not listening — the port may be in use.")
+      : "";
+    $("hostNote").textContent = 'Listed as "' + (s.host_name || "") + '". Blank uses the device name.';
     if (s.panel) { $("achieved").textContent = s.panel; $("achieved").className = s.degraded ? "achieved warn" : "achieved"; }
     if (s.focusReleasedMinutes > 0) $("focusNote").textContent = "focus hold released for " + s.focusReleasedMinutes + " more minutes";
   } catch (e) { $("status").textContent = "no status"; }
 }
 
 load().then(poll);
-setInterval(poll, 2000);
+
+// Only redraw the list when what is playing actually changed. Rebuilding it on every poll would
+// yank the page out from under a click every two seconds.
+let lastPlayingKey = "";
+setInterval(() => {
+  poll().then(() => {
+    const key = (lastStatus.source || "") + "|" + (lastStatus.current_sequence || "") + "|" + (lastStatus.status_name || "");
+    if (key !== lastPlayingKey && $("files").classList.contains("on")) {
+      lastPlayingKey = key;
+      renderFiles();
+    }
+  });
+}, 2000);
 </script>
 </body>
 </html>

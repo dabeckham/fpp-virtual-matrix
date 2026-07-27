@@ -88,7 +88,8 @@ class SettingsActivity : ComponentActivity() {
             c.copy(panelMode = cycle(app.fppvm.tv.panel.PanelMode.entries, c.panelMode, d))
         },
         Setting("LED profile", "loads values, does not lock them", { it.profileLabel }) { c, d ->
-            val lib = app.fppvm.tv.panel.LedProfiles.BUILT_IN
+            // all(), not BUILT_IN — the D-pad should cycle through saved profiles too.
+            val lib = app.fppvm.tv.panel.LedProfiles.all()
             val i = lib.indexOfFirst { p -> p.id == c.profileId }.coerceAtLeast(0)
             c.applyProfile(lib[(((i + d) % lib.size) + lib.size) % lib.size])
         },

@@ -42,7 +42,9 @@ class WebConfigServer(
     private val storageJson: () -> JSONObject = { JSONObject() },
     /** Start a cached sequence on the device's own clock. Returns false if it is not there. */
     private val onPlayLocal: (String, Boolean) -> Boolean = { _, _ -> false },
-    private val onStopLocal: () -> Unit = {}
+    private val onStopLocal: () -> Unit = {},
+    /** FPP's channel-output config; how a discovering tool learns what kind of output this is. */
+    private val channelOutputsJson: () -> JSONObject = { JSONObject() }
 ) : NanoHTTPD(port) {
 
     companion object {
@@ -54,6 +56,15 @@ class WebConfigServer(
 
         /** Charset must be explicit or non-ASCII in the status strings arrives mangled. */
         private const val JSON_MIME = "application/json; charset=utf-8"
+
+        /** Never fill the volume the show is reading from. 32 MB is enough to stay usable. */
+        private const val SPACE_HEADROOM = 32L * 1024 * 1024
+
+        /**
+         * A discovering tool decides whether a proxied address is an FPP instance by looking for
+         * this string in the page it serves, so it has to appear even though nothing renders it.
+         */
+        private const val FPP_PAGE_MARKER = "Falcon Player - FPP"
     }
 
     private val configStore = ConfigStore(context)
@@ -116,13 +127,10 @@ class WebConfigServer(
         }
         if (uri == "/api/profiles") {
             return when (method) {
-                Method.GET -> {
-                    val all = LedProfiles.BUILT_IN + profileStore.load()
-                    newFixedLengthResponse(
-                        Response.Status.OK, JSON_MIME,
-                        LedProfiles.listToJson(all).toString()
-                    )
-                }
+                Method.GET -> newFixedLengthResponse(
+                    Response.Status.OK, JSON_MIME,
+                    LedProfiles.listToJson(LedProfiles.all()).toString()
+                )
                 Method.POST -> {
                     val p = LedProfile.fromJson(JSONObject(readBody(session)))
                         ?: return json(Response.Status.BAD_REQUEST, JSONObject().put("error", "bad profile"))
@@ -133,8 +141,17 @@ class WebConfigServer(
             }
         }
         if (uri.startsWith("/api/profiles/") && method == Method.DELETE) {
-            profileStore.delete(uri.removePrefix("/api/profiles/"))
-            return json(Response.Status.OK, JSONObject().put("status", "OK"))
+            val id = java.net.URLDecoder.decode(uri.removePrefix("/api/profiles/"), "UTF-8")
+            // Built-ins are the reference the "(modified)" marker is measured against, so they are
+            // not deletable — and a delete that appeared to work but did not would be worse.
+            if (LedProfiles.BUILT_IN.any { it.id == id }) {
+                return json(
+                    Response.Status.FORBIDDEN,
+                    JSONObject().put("error", "built-in profiles cannot be deleted").put("id", id)
+                )
+            }
+            profileStore.delete(id)
+            return json(Response.Status.OK, JSONObject().put("status", "OK").put("id", id))
         }
         if (uri == "/api/status") return json(Response.Status.OK, statusJson())
         if (uri == "/api/storage") return json(Response.Status.OK, storageJson())
@@ -151,18 +168,7 @@ class WebConfigServer(
             onStopLocal()
             return json(Response.Status.OK, JSONObject().put("status", "OK"))
         }
-        if (uri == "/api/move" && method == Method.POST) {
-            val o = JSONObject(readBody(session))
-            val name = o.optString("name", "")
-            val removable = o.optString("to", "usb").equals("usb", ignoreCase = true)
-            val target = app.fppvm.tv.fseq.SequenceStorage.writeDir(context, removable)
-            val ok = sequences.moveTo(name, target)
-            return json(
-                if (ok) Response.Status.OK else Response.Status.INTERNAL_ERROR,
-                JSONObject().put("status", if (ok) "OK" else "move failed")
-                    .put("name", name).put("to", target.absolutePath)
-            )
-        }
+        if (uri == "/api/move" && method == Method.POST) return moveFiles(readBody(session))
         if (uri == "/api/focus" && method == Method.POST) {
             onBringToFront()
             return json(Response.Status.OK, JSONObject().put("status", "OK"))
@@ -171,6 +177,32 @@ class WebConfigServer(
         // --- enough of FPP's own API that xLights and a player recognise this device
         if (uri == "/api/system/info") return json(Response.Status.OK, identityJson())
         if (uri == "/api/fppd/status") return json(Response.Status.OK, statusJson())
+        // Both names, because which one a discovering tool asks for depends on its version.
+        if (uri == "/api/channel/output/channelOutputsJSON" ||
+            uri == "/api/channel/output/co-pixelStrings" ||
+            uri == "/api/channel/output/co-other"
+        ) {
+            return json(Response.Status.OK, channelOutputsJson())
+        }
+        // This device proxies for nobody. Answering plainly is still better than a 404: the caller
+        // treats a successful answer as proof the HTTP surface is alive.
+        if (uri == "/api/proxies") {
+            return newFixedLengthResponse(Response.Status.OK, JSON_MIME, "[]")
+        }
+        // Empty on purpose. This endpoint lists the systems a player has *learned about*, in its
+        // own field names — which are not the ones /api/system/info uses. A remote knows of no
+        // other systems, and a half-populated entry here would be worse than none: a reader that
+        // finds an entry without a usable address abandons the whole response. What matters is the
+        // 200, which is what proves this device answers HTTP at all.
+        if (uri == "/api/fppd/multiSyncSystems") {
+            return json(Response.Status.OK, JSONObject().put("systems", JSONArray()))
+        }
+        // Browser upload. Distinct from the FPP token/PATCH dance below because a browser cannot
+        // drive that, and streaming the body straight to disk keeps a 200 MB sequence off a heap
+        // that only has a few hundred megabytes to give.
+        if (uri.startsWith("/api/files/sequences/") && (method == Method.PUT || method == Method.POST)) {
+            return receiveUpload(session, uri.removePrefix("/api/files/sequences/"))
+        }
         if (uri == "/api/files/sequences") {
             val arr = JSONArray()
             sequences.listCached().forEach {
@@ -278,6 +310,112 @@ class WebConfigServer(
         return json(Response.Status.METHOD_NOT_ALLOWED, JSONObject().put("error", "method"))
     }
 
+    /**
+     * Moves one or more sequences to another volume.
+     *
+     * The destination is named by its directory rather than by "usb" or "internal", because a
+     * device can mount more than two volumes and a two-way flag cannot express that. It is checked
+     * against the volumes actually mounted, so a path from the request can never be used to write
+     * outside the sequence directories. `to` is still accepted for anything already speaking the
+     * older form.
+     */
+    private fun moveFiles(body: String): Response {
+        val o = JSONObject(body)
+        val names = ArrayList<String>()
+        o.optJSONArray("names")?.let { arr -> (0 until arr.length()).forEach { names.add(arr.getString(it)) } }
+        o.optString("name", "").takeIf { it.isNotBlank() }?.let { names.add(it) }
+        if (names.isEmpty()) return json(Response.Status.BAD_REQUEST, JSONObject().put("error", "no files named"))
+
+        val known = app.fppvm.tv.fseq.SequenceStorage.searchDirs(context)
+        val requested = o.optString("dir", "")
+        val target = if (requested.isNotBlank()) {
+            known.firstOrNull { it.absolutePath == requested }
+                ?: return json(Response.Status.BAD_REQUEST, JSONObject().put("error", "unknown volume"))
+        } else {
+            app.fppvm.tv.fseq.SequenceStorage
+                .writeDir(context, o.optString("to", "usb").equals("usb", ignoreCase = true))
+        }
+
+        val store = sequences
+        val failed = JSONArray()
+        var moved = 0
+        for (n in names) if (store.moveTo(n, target)) moved++ else failed.put(n)
+        return json(
+            if (failed.length() == 0) Response.Status.OK else Response.Status.INTERNAL_ERROR,
+            JSONObject().put("status", if (failed.length() == 0) "OK" else "some moves failed")
+                .put("moved", moved).put("failed", failed).put("dir", target.absolutePath)
+        )
+    }
+
+    /**
+     * Receives one sequence as a raw request body.
+     *
+     * Streamed rather than buffered: these files run to hundreds of megabytes and this device has
+     * less than a gigabyte of RAM in total. It lands under a temporary name and is renamed only
+     * once the declared length has arrived, so a cancelled upload can never be mistaken for a
+     * playable sequence — and the free space is checked first, because filling the volume the show
+     * is running from is a worse failure than refusing the file.
+     */
+    private fun receiveUpload(session: IHTTPSession, rawName: String): Response {
+        val name = SequenceStore.sanitize(java.net.URLDecoder.decode(rawName, "UTF-8"))
+            ?: return json(Response.Status.BAD_REQUEST, JSONObject().put("error", "bad file name"))
+        val length = session.headers["content-length"]?.toLongOrNull() ?: -1L
+        if (length <= 0L) {
+            return json(Response.Status.BAD_REQUEST, JSONObject().put("error", "content-length required"))
+        }
+
+        val dir = app.fppvm.tv.fseq.SequenceStorage
+            .writeDir(context, configStore.load().preferRemovableStorage).apply { mkdirs() }
+        val free = dir.usableSpace
+        if (free in 1 until length + SPACE_HEADROOM) {
+            return json(
+                Response.Status.INTERNAL_ERROR,
+                JSONObject().put("error", "not enough room").put("needed", length).put("free", free)
+            )
+        }
+
+        val part = File(dir, name + PART_SUFFIX)
+        var written = 0L
+        try {
+            part.outputStream().use { out ->
+                val input = session.inputStream
+                val buf = ByteArray(256 * 1024)
+                while (written < length) {
+                    val n = input.read(buf, 0, minOf(length - written, buf.size.toLong()).toInt())
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    written += n
+                }
+                out.flush()
+            }
+        } catch (t: Throwable) {
+            part.delete()
+            Log.w(TAG, "upload of $name failed", t)
+            return json(Response.Status.INTERNAL_ERROR, JSONObject().put("error", t.message ?: "write failed"))
+        }
+
+        if (written < length) {
+            part.delete()
+            return json(
+                Response.Status.BAD_REQUEST,
+                JSONObject().put("error", "transfer ended early").put("received", written).put("expected", length)
+            )
+        }
+
+        val target = File(dir, name)
+        target.delete()
+        if (!part.renameTo(target)) {
+            part.delete()
+            return json(Response.Status.INTERNAL_ERROR, JSONObject().put("error", "commit failed"))
+        }
+        Log.i(TAG, "received $name ($written bytes) into ${dir.absolutePath}")
+        return json(
+            Response.Status.OK,
+            JSONObject().put("status", "OK").put("name", name).put("size", written)
+                .put("dir", dir.absolutePath)
+        )
+    }
+
     private fun readBody(session: IHTTPSession): String {
         val len = session.headers["content-length"]?.toIntOrNull() ?: 0
         if (len <= 0) return "{}"
@@ -300,7 +438,9 @@ class WebConfigServer(
         } catch (t: Throwable) {
             "<h1>FPP Virtual Matrix</h1><p>config.html missing from assets</p>"
         }
-        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
+        // Prepended rather than baked into the asset so it cannot be lost in a redesign of the page.
+        val marked = "<!-- $FPP_PAGE_MARKER compatible -->\n$html"
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", marked)
     }
 }
 

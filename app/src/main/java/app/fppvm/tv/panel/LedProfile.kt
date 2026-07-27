@@ -168,7 +168,27 @@ object LedProfiles {
 
     val DEFAULT: LedProfile = BUILT_IN.first { it.id == "bullet_25" }
 
-    fun byId(id: String): LedProfile? = BUILT_IN.firstOrNull { it.id == id }
+    /**
+     * Where saved profiles come from.
+     *
+     * They live in SharedPreferences, which this object deliberately cannot reach — keeping the
+     * library pure is what lets the solver and the config be unit-tested without Android. The app
+     * installs a lookup at start-up; with none installed only the built-ins resolve, which is
+     * exactly what a test wants.
+     *
+     * This has to exist because [byId] is the single point every caller goes through. While it
+     * searched only [BUILT_IN], selecting one of your own saved profiles resolved to null and
+     * silently did nothing, and [MatrixConfig.profileEdited] reported every one of them as
+     * modified because it could not find anything to compare against.
+     */
+    @Volatile
+    var userProfiles: () -> List<LedProfile> = { emptyList() }
+
+    /** Built-ins first, then anything the user saved. */
+    fun all(): List<LedProfile> = BUILT_IN + userProfiles()
+
+    fun byId(id: String): LedProfile? =
+        BUILT_IN.firstOrNull { it.id == id } ?: userProfiles().firstOrNull { it.id == id }
 
     fun listToJson(profiles: List<LedProfile>): JSONArray =
         JSONArray().apply { profiles.forEach { put(it.toJson()) } }

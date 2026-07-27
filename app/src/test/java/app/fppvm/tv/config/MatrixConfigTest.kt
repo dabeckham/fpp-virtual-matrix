@@ -70,9 +70,31 @@ class MatrixConfigTest {
 
     @Test
     fun `the advertised range is the block this matrix actually consumes`() {
-        // FPP formats a remote's ranges as "start-count" with a zero-based start.
+        // FPP writes "first-last", both ends zero-based and inclusive:
+        //   snprintf(buf, sizeof(buf), "%d-%d", a.first, (a.first + a.second - 1))
+        // This test previously asserted "start-count", which is the same string only when the
+        // start channel is 1 — and describes a different block for every other value.
         val c = MatrixConfig(width = 32, height = 16, startChannel = 1025)
-        assertEquals("1024-1536", c.rangesString())
+        assertEquals(1536, c.channelCount)
+        assertEquals("1024-2559", c.rangesString())
+    }
+
+    @Test
+    fun `a matrix starting at channel one is zero-based and inclusive at both ends`() {
+        val c = MatrixConfig(width = 64, height = 32, startChannel = 1)
+        assertEquals(6144, c.channelCount)
+        assertEquals("0-6143", c.rangesString())
+    }
+
+    @Test
+    fun `the advertised range never reads as a negative span`() {
+        // The shape of the old bug: a count in the second position is smaller than the start, so
+        // every reader computes last < first and either clamps or gives up.
+        val c = MatrixConfig(width = 64, height = 32, startChannel = 10_001)
+        val (first, last) = c.rangesString().split("-").map { it.toInt() }
+        assertEquals(10_000, first)
+        assertTrue("last must not precede first", last >= first)
+        assertEquals(c.channelCount, last - first + 1)
     }
 
     @Test

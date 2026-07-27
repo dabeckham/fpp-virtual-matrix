@@ -96,4 +96,34 @@ class LedProfileTest {
         assertTrue(tweaked.profileEdited)
         assertEquals("P10 outdoor SMD (modified)", tweaked.profileLabel)
     }
+
+    @Test
+    fun `a saved profile resolves by id and compares against itself`() {
+        // byId used to search only the built-ins, so selecting one of your own profiles resolved
+        // to null: applying it silently did nothing, and every one of them reported as modified
+        // because there was nothing to compare against.
+        val mine = LedProfile(
+            "user_my_roofline", "My roofline", 25.4f, 12.0f, EmitterShape.ROUND,
+            substrate = LedProfile.SUBSTRATE_NONE, louvrePercent = 0, bloomPercent = 65,
+            builtIn = false
+        )
+        LedProfiles.userProfiles = { listOf(mine) }
+        try {
+            assertEquals(mine, LedProfiles.byId("user_my_roofline"))
+            assertEquals(LedProfiles.BUILT_IN.size + 1, LedProfiles.all().size)
+
+            val loaded = app.fppvm.tv.config.MatrixConfig().applyProfile(mine)
+            assertTrue("a freshly loaded saved profile is not modified", !loaded.profileEdited)
+            assertEquals("My roofline", loaded.profileLabel)
+            assertEquals("My roofline (modified)", loaded.copy(bloomPercent = 20).profileLabel)
+        } finally {
+            LedProfiles.userProfiles = { emptyList() }
+        }
+    }
+
+    @Test
+    fun `with no lookup installed only the built-ins resolve`() {
+        assertEquals(LedProfiles.BUILT_IN, LedProfiles.all())
+        assertEquals(null, LedProfiles.byId("user_nothing_saved"))
+    }
 }
