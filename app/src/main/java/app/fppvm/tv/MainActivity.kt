@@ -246,6 +246,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         videoView.visibility = View.VISIBLE
+        videoView.loop = config.loopPlayback
         matrixView.videoUnderlay = true
         player.videoUnderlay = true
         videoView.play(file)
@@ -255,6 +256,11 @@ class MainActivity : ComponentActivity() {
     /** The video file currently behind the panel, for the status page. */
     private fun videoJson(): JSONObject = JSONObject().apply {
         put("playing", videoView.isPlaying())
+        // Named so the file manager can tell which row is the one playing. It cannot use the
+        // sequence field for that: live channel data legitimately takes that over while the video
+        // carries on underneath.
+        put("name", player.localVideoName)
+        put("loop", videoView.loop)
         put("positionMs", videoView.positionMs())
         put("durationMs", videoView.durationMs())
         put("underlay", matrixView.videoUnderlay)
@@ -291,9 +297,21 @@ class MainActivity : ComponentActivity() {
             put("status_name", st.state.name.lowercase())
             put("source", st.source.name)
             put("current_sequence", st.sequence)
-            put("seconds_played", if (st.stepTimeMs > 0 && st.frame >= 0) st.frame * st.stepTimeMs / 1000 else 0)
-            put("seconds_remaining",
-                if (st.stepTimeMs > 0 && st.frame >= 0) (st.totalFrames - st.frame) * st.stepTimeMs / 1000 else 0)
+            // A video has no frames or step time, so the sequence arithmetic gives 0s / 0s.
+            // Take the figures from the player that actually knows them.
+            val vPos = videoView.positionMs()
+            val vDur = videoView.durationMs()
+            val onVideo = videoView.isPlaying() && vDur > 0 && st.stepTimeMs <= 0
+            put("seconds_played", when {
+                onVideo -> vPos / 1000
+                st.stepTimeMs > 0 && st.frame >= 0 -> st.frame * st.stepTimeMs / 1000
+                else -> 0
+            })
+            put("seconds_remaining", when {
+                onVideo -> (vDur - vPos).coerceAtLeast(0) / 1000
+                st.stepTimeMs > 0 && st.frame >= 0 -> (st.totalFrames - st.frame) * st.stepTimeMs / 1000
+                else -> 0
+            })
             put("uptimeSeconds", (android.os.SystemClock.elapsedRealtime() - startedAtElapsed) / 1000)
             put("time", timeStamp())
             put("holdFocus", config.holdFocus)

@@ -97,6 +97,9 @@ data class MatrixConfig(
     /** Blank disables auth, matching how the rest of the show kit is normally run. */
     val webPassword: String = "",
 
+    /** Repeat a file started from the file manager when it reaches the end. */
+    val loopPlayback: Boolean = true,
+
     /** Write sequences to a USB stick when one is mounted. Reads always span every volume. */
     val preferRemovableStorage: Boolean = true,
     /**
@@ -234,6 +237,7 @@ data class MatrixConfig(
         put("substrateColor", substrateColor)
         put("webServerEnabled", webServerEnabled)
         put("webPort", webPort)
+        put("loopPlayback", loopPlayback)
         put("preferRemovableStorage", preferRemovableStorage)
         put("holdFocus", holdFocus)
         // profileLabel is derived, and read-only: the page shows it, fromJson ignores it.
@@ -305,6 +309,7 @@ data class MatrixConfig(
             webServerEnabled = o.optBoolean("webServerEnabled", base.webServerEnabled),
             webPort = o.optInt("webPort", base.webPort),
             webPassword = o.optString("webPassword", base.webPassword),
+            loopPlayback = o.optBoolean("loopPlayback", base.loopPlayback),
             preferRemovableStorage = o.optBoolean("preferRemovableStorage", base.preferRemovableStorage),
             holdFocus = o.optBoolean("holdFocus", base.holdFocus)
         ).validated()

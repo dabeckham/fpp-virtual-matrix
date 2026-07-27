@@ -193,6 +193,15 @@ class MatrixPlayer(
     @Volatile
     var onVideoPair: ((java.io.File?) -> Unit)? = null
 
+    /**
+     * The video playing on its own, started from the file manager rather than paired with a
+     * sequence. Tracked separately because live channel data arriving does **not** stop it — the
+     * two are different layers, and a sequencer pushing effects over a video is the point.
+     */
+    @Volatile
+    var localVideoName: String = ""
+        private set
+
     @Volatile
     private var seenSystems = LinkedHashMap<String, PingPacket>()
 
@@ -258,6 +267,7 @@ class MatrixPlayer(
             reader = null
             window = null
         }
+        localVideoName = ""
         onVideoPair?.invoke(null)
         publish(status.copy(state = State.IDLE, sequence = "", frame = -1, message = "stopped by $masterIp"))
     }
@@ -281,6 +291,8 @@ class MatrixPlayer(
         // show goes dark.
         clock.stop()
         localPlayback = false
+        localVideoName = ""
+        onVideoPair?.invoke(null)
         publish(status.copy(state = State.BLANKED, frame = -1, message = "blanked by $masterIp"))
     }
 
@@ -401,6 +413,7 @@ class MatrixPlayer(
             }
             localLoop = loop
             localPlayback = true
+            localVideoName = file.name
             onVideoPair?.invoke(file)
             publish(
                 status.copy(
@@ -433,6 +446,7 @@ class MatrixPlayer(
 
     fun stopLocal() {
         localPlayback = false
+        localVideoName = ""
         onVideoPair?.invoke(null)
         clock.stop()
         synchronized(readerLock) {
@@ -499,6 +513,9 @@ class MatrixPlayer(
                 window = newWindow
             }
             clock.configure(newReader.header.stepTimeMs, newReader.header.numFrames)
+            // MultiSync outranks everything: whatever was on the video layer is replaced by this
+            // sequence's own pairing, or cleared if it has none. The master is running a show.
+            localVideoName = ""
             onVideoPair?.invoke(store.pairedVideo(file.name))
             decodeMsAvg = 0.0
             paintMsAvg = 0.0
@@ -689,7 +706,9 @@ class MatrixPlayer(
                 if (ddpActive(nowMs)) {
                     if (!ddpDriving) {
                         ddpDriving = true
-                        publish(status.copy(state = State.PLAYING, sequence = "", frame = -1, message = "live from $ddpSender"))
+                        // Keep the sequence/video name. Clearing it made the file manager think
+                        // playback had stopped the moment a sequencer started sending.
+                        publish(status.copy(state = State.PLAYING, frame = -1, message = "live from $ddpSender"))
                     }
                     // Timed like the sequence path. Live output is where the panel is asked to
                     // paint fastest, so it is the measurement that matters, and it used to report
@@ -716,7 +735,16 @@ class MatrixPlayer(
                 } else {
                     if (ddpDriving) {
                         ddpDriving = false
-                        publish(status.copy(state = State.IDLE, frame = -1, message = "live output stopped"))
+                        // A video started from the file manager keeps playing when the live feed
+                        // stops; only Stop or the master ends it.
+                        val stillPlaying = localVideoName.isNotEmpty()
+                        publish(
+                            status.copy(
+                                state = if (stillPlaying) State.PLAYING else State.IDLE,
+                                frame = -1,
+                                message = if (stillPlaying) "playing video" else "live output stopped"
+                            )
+                        )
                     }
                     renderIdle(cfg, nowMs - startedAt)
                     try {
@@ -816,9 +844,12 @@ class MatrixPlayer(
      */
     private fun publish(next: Status) {
         val derived = next.copy(
+            // Where the panel's pixels come from. Live data outranks local playback here because
+            // that is literally what is being drawn — the video underneath is reported separately,
+            // so the file manager can still see it is playing.
             source = when {
-                localPlayback -> Source.LOCAL
                 ddpActive(System.currentTimeMillis()) -> Source.DDP
+                localPlayback -> Source.LOCAL
                 else -> Source.MASTER
             },
             panel = panelGeometry

@@ -225,6 +225,13 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
 
   <div class="card">
     <h2>Sequences</h2>
+    <div class="row">
+      <label for="loopPlayback">Repeat</label>
+      <select id="loopPlayback">
+        <option value="true">Repeat when it ends</option>
+        <option value="false">Play once</option>
+      </select>
+    </div>
     <div id="fileList"><span class="sub">…</span></div>
   </div>
 </div>
@@ -243,7 +250,8 @@ const NUM = ["pitchMm","emitterMm","bloomPercent","brightness","gamma","panelDpi
 const PLAIN = ["width","height","startChannel","remoteOffsetMs"];
 const TEXT = ["hostname"];
 const SEL = ["emitterShape","substrateColor","downsample","panelMode","colorOrder",
-             "holdFocus","showOverlay","autoFetchSequences","preferRemovableStorage","idleMode","ddpEnabled"];
+             "holdFocus","showOverlay","autoFetchSequences","preferRemovableStorage","idleMode","ddpEnabled",
+             "loopPlayback"];
 const DEC = { pitchMm:2, emitterMm:2, gamma:2 };
 let cfg = {}, sending = false, queued = null;
 let profiles = [], volumes = [], files = [], lastStatus = {};
@@ -262,6 +270,8 @@ function emitterCap() {
   const p = Number(cfg.pitchMm);
   return p > 0 ? Math.min(EMITTER_SLIDER_MAX, p) : EMITTER_SLIDER_MAX;
 }
+const mmss = s => { s = Math.max(0, Math.round(Number(s) || 0));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 const bytes = b => b >= 1073741824 ? (b/1073741824).toFixed(1)+" GB"
                  : b >= 1048576 ? (b/1048576).toFixed(0)+" MB"
                  : b >= 1024 ? (b/1024).toFixed(0)+" KB" : b+" B";
@@ -461,6 +471,11 @@ function pairedWith(name) {
 }
 
 function isPlaying(name) {
+  // Ask the video layer about a video. The sequence field cannot answer for one: live channel
+  // data legitimately takes that over while the video carries on underneath, and reading it here
+  // made the button flip back to Play the moment a sequencer started sending.
+  const v = lastStatus.video || {};
+  if (v.playing && v.name === name) return true;
   return lastStatus.source === "LOCAL" && lastStatus.current_sequence === name &&
          (lastStatus.status_name || "").toLowerCase() === "playing";
 }
@@ -519,7 +534,7 @@ function renderFiles() {
       await fetch("api/stop", { method:"POST" });
     } else {
       await fetch("api/play", { method:"POST", headers:{"Content-Type":"application/json"},
-                                body: JSON.stringify({ name: name, loop: true }) });
+                                body: JSON.stringify({ name: name, loop: cfg.loopPlayback !== false }) });
     }
     await poll();
     renderFiles();
@@ -642,8 +657,10 @@ async function poll() {
     const src = s.source === "LOCAL" ? "  (local)" : s.source === "DDP" ? "  (live)" : "";
     el.textContent = st + src;
     el.className = "stat" + (st === "PLAYING" ? "" : st === "BLANKED" ? " blank" : st === "ERROR" ? " err" : " idle");
+    const total = Number(s.seconds_played) + Number(s.seconds_remaining);
+    const clock = total > 0 ? "  " + mmss(s.seconds_played) + " / " + mmss(total) : "";
     $("h_seq").textContent = s.current_sequence
-      ? s.current_sequence + "  " + s.seconds_played + "s / " + (Number(s.seconds_played) + Number(s.seconds_remaining)) + "s"
+      ? s.current_sequence + clock + (s.source === "DDP" ? "  + live" : "")
       : (s.source === "DDP" ? "live output" : "no sequence");
     $("h_time").textContent = s.time || "";
     const up = Number(s.uptimeSeconds || 0);
@@ -666,7 +683,9 @@ load().then(poll);
 let lastPlayingKey = "";
 setInterval(() => {
   poll().then(() => {
-    const key = (lastStatus.source || "") + "|" + (lastStatus.current_sequence || "") + "|" + (lastStatus.status_name || "");
+    const v = lastStatus.video || {};
+    const key = (lastStatus.source || "") + "|" + (lastStatus.current_sequence || "") + "|" +
+                (lastStatus.status_name || "") + "|" + (v.playing ? v.name : "");
     if (key !== lastPlayingKey && $("files").classList.contains("on")) {
       lastPlayingKey = key;
       renderFiles();

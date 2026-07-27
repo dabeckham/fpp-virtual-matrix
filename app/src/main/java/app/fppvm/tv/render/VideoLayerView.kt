@@ -46,6 +46,10 @@ class VideoLayerView @JvmOverloads constructor(
     private var player: MediaPlayer? = null
     private var pendingFile: File? = null
 
+    /** Repeat at the end. Set before [play]; the file manager owns this. */
+    @Volatile
+    var loop: Boolean = true
+
     @Volatile
     var surfaceReady = false
         private set
@@ -70,7 +74,7 @@ class VideoLayerView @JvmOverloads constructor(
         stop()
     }
 
-    /** Starts [file], looping. Held until the surface exists if it does not yet. */
+    /** Starts [file]. Held until the surface exists if it does not yet. */
     fun play(file: File): Boolean {
         pendingFile = file
         if (!surfaceReady) return false
@@ -79,7 +83,7 @@ class VideoLayerView @JvmOverloads constructor(
             player = MediaPlayer().apply {
                 setDisplay(this@VideoLayerView.holder)
                 setDataSource(file.absolutePath)
-                isLooping = true
+                isLooping = loop
                 setOnErrorListener { _, what, extra ->
                     lastError = "media error $what/$extra"
                     Log.w(TAG, "playback error on ${file.name}: $what/$extra")
