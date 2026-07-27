@@ -90,6 +90,8 @@ class MainActivity : ComponentActivity() {
         applyIntentOverride(intent)?.let {
             config = it
             player.applyConfig(it)
+            applyStorage()
+            reconcileDdp()
             updateOverlay()
         }
     }
@@ -185,6 +187,10 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread {
                         config = next
                         player.applyConfig(next)
+                        // Both of these used to wait for the next onStart, so switching storage or
+                        // turning live output on from the browser appeared to do nothing.
+                        applyStorage()
+                        reconcileDdp()
                         updateOverlay()
                     }
                 },
@@ -375,6 +381,17 @@ class MainActivity : ComponentActivity() {
      * model in xLights. That reply is the only route to those columns: for anything identifying as
      * a full FPP instance xLights fills them from HTTP on port 80, which an Android app cannot bind.
      */
+    /** Brings the listener into line with the setting, whichever way it was just changed. */
+    private fun reconcileDdp() {
+        val running = ddp != null
+        if (config.ddpEnabled && !running) {
+            startDdp()
+        } else if (!config.ddpEnabled && running) {
+            ddp?.stop()
+            ddp = null
+        }
+    }
+
     private fun startDdp() {
         if (!config.ddpEnabled) return
         val r = app.fppvm.tv.proto.DdpReceiver(

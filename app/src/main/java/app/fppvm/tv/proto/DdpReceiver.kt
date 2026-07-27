@@ -18,6 +18,7 @@ interface DdpListener {
     /** The sender finished a frame and wants it shown. */
     fun onDdpPush(sourceIp: String)
 
+    /** Delivered once per frame rather than once per packet — see [DdpReceiver.snapshot]. */
     fun onDdpStats(stats: DdpStats)
 }
 
@@ -26,7 +27,6 @@ data class DdpStats(
     val pushes: Int = 0,
     val queries: Int = 0,
     val bytes: Long = 0,
-    val outOfRange: Int = 0,
     val malformed: Int = 0,
     val lastPacketAtMs: Long = 0L,
     val lastSender: String = ""
@@ -71,10 +71,26 @@ class DdpReceiver(
     private var socket: DatagramSocket? = null
     private var thread: Thread? = null
 
-    @Volatile
-    private var stats = DdpStats()
+    /**
+     * Counters rather than a snapshot object.
+     *
+     * A full matrix is hundreds of packets per frame at up to 40 frames a second, so allocating a
+     * new stats record for each one — and calling back for each one — would cost tens of thousands
+     * of short-lived objects a second on a device whose whole job is to keep painting on time.
+     * Only the receive thread writes them; volatile is for the readers.
+     */
+    @Volatile private var nPackets = 0
+    @Volatile private var nPushes = 0
+    @Volatile private var nQueries = 0
+    @Volatile private var nBytes = 0L
+    @Volatile private var nMalformed = 0
+    @Volatile private var lastAtMs = 0L
+    @Volatile private var lastSender = ""
 
-    fun currentStats(): DdpStats = stats
+    private fun snapshot(): DdpStats =
+        DdpStats(nPackets, nPushes, nQueries, nBytes, nMalformed, lastAtMs, lastSender)
+
+    fun currentStats(): DdpStats = snapshot()
 
     fun isRunning(): Boolean = running.get()
 
@@ -138,37 +154,32 @@ class DdpReceiver(
     private fun handle(sock: DatagramSocket, buf: ByteArray, len: Int, srcIp: String, srcPort: Int) {
         val p = DdpCodec.parse(buf, len)
         if (p == null) {
-            bump { it.copy(malformed = it.malformed + 1) }
+            nMalformed++
             return
         }
-        val now = System.currentTimeMillis()
+        lastAtMs = System.currentTimeMillis()
+        lastSender = srcIp
 
         if (p.isQuery) {
-            bump { it.copy(queries = it.queries + 1, lastPacketAtMs = now, lastSender = srcIp) }
+            nQueries++
             if (p.destinationId == DdpProtocol.ID_STATUS || p.destinationId == DdpProtocol.ID_ALL_DEVICES) {
                 replyStatus(sock, srcIp, srcPort)
             }
+            listener.onDdpStats(snapshot())
             return
         }
         if (p.isReply) return // another device answering someone else's probe
-        if (!p.isDisplayData) {
-            bump { it.copy(packets = it.packets + 1, lastPacketAtMs = now, lastSender = srcIp) }
-            return
-        }
+        nPackets++
+        if (!p.isDisplayData) return
 
-        bump {
-            it.copy(
-                packets = it.packets + 1,
-                bytes = it.bytes + p.dataLength,
-                lastPacketAtMs = now,
-                lastSender = srcIp
-            )
-        }
+        nBytes += p.dataLength
         if (p.dataLength > 0) {
             listener.onDdpData(p.offset, buf, p.dataStart, p.dataLength, srcIp)
         }
         if (p.isPush) {
-            bump { it.copy(pushes = it.pushes + 1) }
+            nPushes++
+            // Once a frame, which is where the reporting cost belongs.
+            listener.onDdpStats(snapshot())
             listener.onDdpPush(srcIp)
         }
     }
@@ -186,9 +197,4 @@ class DdpReceiver(
         }
     }
 
-    private inline fun bump(f: (DdpStats) -> DdpStats) {
-        val s = f(stats)
-        stats = s
-        listener.onDdpStats(s)
-    }
 }

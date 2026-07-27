@@ -314,9 +314,16 @@ class MatrixPlayer(
         ddpLastDataMs = System.currentTimeMillis()
     }
 
+    /**
+     * A push only wakes the painter; it deliberately does not mark live output as active.
+     *
+     * The end-of-frame sync packet is *broadcast*, so this panel sees one whenever a sequencer is
+     * driving anything at all on the network. Treating that as "someone is sending to me" would let
+     * an unrelated show take the screen away from the idle pattern — or from a blank — while not a
+     * single channel of the data was ever addressed to this device. Only [onDdpData] landing bytes
+     * inside our own slice counts.
+     */
     override fun onDdpPush(sourceIp: String) {
-        ddpSender = sourceIp
-        ddpLastDataMs = System.currentTimeMillis()
         synchronized(ddpWake) {
             ddpFrameReady = true
             ddpWake.notifyAll()
