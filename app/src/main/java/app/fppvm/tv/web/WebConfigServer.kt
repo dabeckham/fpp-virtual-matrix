@@ -36,7 +36,10 @@ class WebConfigServer(
     port: Int,
     private val onConfigChanged: (MatrixConfig) -> Unit,
     private val statusJson: () -> JSONObject,
-    private val identityJson: () -> JSONObject
+    private val identityJson: () -> JSONObject,
+    /** Pulls the show back to the front — the TV may have dropped to its launcher. */
+    private val onBringToFront: () -> Unit = {},
+    private val storageJson: () -> JSONObject = { JSONObject() }
 ) : NanoHTTPD(port) {
 
     companion object {
@@ -49,7 +52,12 @@ class WebConfigServer(
 
     private val configStore = ConfigStore(context)
     private val profileStore = ProfileStore(context)
-    private val sequences = SequenceStore(File(context.filesDir, "sequences"))
+    /** Spans every mounted volume, so a sequence on a USB stick is listed and served too. */
+    private val sequences: SequenceStore
+        get() = SequenceStore(
+            app.fppvm.tv.fseq.SequenceStorage.writeDir(context, true),
+            searchDirs = app.fppvm.tv.fseq.SequenceStorage.searchDirs(context)
+        )
 
     /** Blank disables auth, matching how the rest of the show kit is usually run. */
     @Volatile
@@ -123,6 +131,11 @@ class WebConfigServer(
             return json(Response.Status.OK, JSONObject().put("status", "OK"))
         }
         if (uri == "/api/status") return json(Response.Status.OK, statusJson())
+        if (uri == "/api/storage") return json(Response.Status.OK, storageJson())
+        if (uri == "/api/focus" && method == Method.POST) {
+            onBringToFront()
+            return json(Response.Status.OK, JSONObject().put("status", "OK"))
+        }
 
         // --- enough of FPP's own API that xLights and a player recognise this device
         if (uri == "/api/system/info") return json(Response.Status.OK, identityJson())
@@ -174,7 +187,8 @@ class WebConfigServer(
             val total = headers["upload-length"]?.toLongOrNull() ?: -1L
             val length = headers["content-length"]?.toLongOrNull() ?: 0L
 
-            val dirFile = File(context.filesDir, "sequences").apply { mkdirs() }
+            val dirFile = app.fppvm.tv.fseq.SequenceStorage
+                .writeDir(context, true).apply { mkdirs() }
             val part = File(dirFile, name + PART_SUFFIX)
             if (offset == 0L) part.delete()
 

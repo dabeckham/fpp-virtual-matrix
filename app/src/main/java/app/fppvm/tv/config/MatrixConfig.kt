@@ -90,7 +90,15 @@ data class MatrixConfig(
     val webServerEnabled: Boolean = true,
     val webPort: Int = 8080,
     /** Blank disables auth, matching how the rest of the show kit is normally run. */
-    val webPassword: String = ""
+    val webPassword: String = "",
+
+    /** Write sequences to a USB stick when one is mounted. Reads always span every volume. */
+    val preferRemovableStorage: Boolean = true,
+    /**
+     * Take the screen back if something steals focus mid-show. Only acts while a show is playing,
+     * and a long BACK press stands it down — see FocusGuard.
+     */
+    val holdFocus: Boolean = false
 ) {
     /**
      * HIGH keeps the full ARGB_8888 pipeline. FAST renders straight to RGB565, halving the bytes
@@ -212,6 +220,8 @@ data class MatrixConfig(
         put("louvrePercent", louvrePercent)
         put("webServerEnabled", webServerEnabled)
         put("webPort", webPort)
+        put("preferRemovableStorage", preferRemovableStorage)
+        put("holdFocus", holdFocus)
         // profileLabel is derived, and read-only: the page shows it, fromJson ignores it.
         put("profileLabel", profileLabel)
         put("pitchMm", pitchMm.toDouble())
@@ -280,7 +290,9 @@ data class MatrixConfig(
             downsample = enumOr(o.optString("downsample"), base.downsample),
             webServerEnabled = o.optBoolean("webServerEnabled", base.webServerEnabled),
             webPort = o.optInt("webPort", base.webPort),
-            webPassword = o.optString("webPassword", base.webPassword)
+            webPassword = o.optString("webPassword", base.webPassword),
+            preferRemovableStorage = o.optBoolean("preferRemovableStorage", base.preferRemovableStorage),
+            holdFocus = o.optBoolean("holdFocus", base.holdFocus)
         ).validated()
 
         private inline fun <reified T : Enum<T>> enumOr(name: String?, fallback: T): T {

@@ -16,7 +16,16 @@ import java.net.URL
  * (`GET /api/file/sequences/<name>`). That needs no configuration on the player and no upload
  * step — plug the TV in and it catches up by itself.
  */
-class SequenceStore(private val dir: File, private val budgetBytes: Long = DEFAULT_BUDGET_BYTES) {
+class SequenceStore(
+    /** Where new files are written. Swapped at runtime when a stick is plugged in or pulled. */
+    @Volatile var dir: File,
+    private val budgetBytes: Long = DEFAULT_BUDGET_BYTES,
+    /**
+     * Every directory to search when resolving a name. Reads span all volumes so a sequence that
+     * lives on a stick is still found while new ones land wherever [dir] currently points.
+     */
+    @Volatile var searchDirs: List<File> = listOf(dir)
+) {
 
     companion object {
         private const val TAG = "FppSeqStore"
@@ -53,19 +62,39 @@ class SequenceStore(private val dir: File, private val budgetBytes: Long = DEFAU
 
     fun localFile(filename: String): File? {
         val name = sanitize(filename) ?: return null
-        val f = File(dir, name)
-        return if (f.isFile && f.length() > 0) f else null
+        for (d in dirsToSearch()) {
+            val f = File(d, name)
+            if (f.isFile && f.length() > 0) return f
+        }
+        return null
+    }
+
+    private fun dirsToSearch(): List<File> {
+        val all = searchDirs
+        return if (all.isEmpty()) listOf(dir) else all
+    }
+
+    /** Points writes at [next] and searches [all]. Safe to call while playing. */
+    fun useDirectories(next: File, all: List<File>) {
+        if (!next.exists()) next.mkdirs()
+        dir = next
+        searchDirs = all.ifEmpty { listOf(next) }
     }
 
     fun has(filename: String): Boolean = localFile(filename) != null
 
-    fun listCached(): List<File> = dir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
+    fun listCached(): List<File> = dirsToSearch()
+        .flatMap { it.listFiles()?.filter { f -> f.isFile && !f.name.endsWith(".part") && !f.name.endsWith(".upload") } ?: emptyList() }
+        .distinctBy { it.name }
+        .sortedBy { it.name }
 
     fun totalBytes(): Long = listCached().sumOf { it.length() }
 
     fun delete(filename: String): Boolean {
         val name = sanitize(filename) ?: return false
-        return File(dir, name).delete()
+        var any = false
+        for (d in dirsToSearch()) if (File(d, name).delete()) any = true
+        return any
     }
 
     /** True if a fetch for [filename] is already running, so callers do not stack duplicates. */
@@ -161,7 +190,7 @@ class SequenceStore(private val dir: File, private val budgetBytes: Long = DEFAU
     private fun encodePath(name: String): String =
         java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")
 
-    /** Oldest-accessed-first eviction once the cache exceeds its byte budget. */
+    /** Oldest-accessed-first eviction once the write volume exceeds its byte budget. */
     fun evictIfNeeded() {
         val files = dir.listFiles()?.filter { it.isFile && !it.name.endsWith(".part") } ?: return
         var total = files.sumOf { it.length() }

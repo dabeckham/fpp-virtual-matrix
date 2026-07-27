@@ -10,6 +10,8 @@ import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import app.fppvm.tv.config.ConfigStore
 import app.fppvm.tv.config.MatrixConfig
+import app.fppvm.tv.focus.FocusGuard
+import app.fppvm.tv.fseq.SequenceStorage
 import app.fppvm.tv.fseq.SequenceStore
 import app.fppvm.tv.player.MatrixPlayer
 import app.fppvm.tv.proto.FppCodec
@@ -35,6 +37,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var player: MatrixPlayer
     private var client: MultiSyncClient? = null
     private var web: WebConfigServer? = null
+    private var focusGuard: FocusGuard? = null
+    private var storageWatcher: android.content.BroadcastReceiver? = null
 
     private var config: MatrixConfig = MatrixConfig.DEFAULT
 
@@ -56,12 +60,19 @@ class MainActivity : ComponentActivity() {
             }
         )
 
-        store = SequenceStore(File(filesDir, "sequences"))
+        store = SequenceStore(File(filesDir, SequenceStorage.SEQ_SUBDIR))
         player = MatrixPlayer(store, matrixView, config)
         APP_PLAYER = player
 
         if (config.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         publishSurfaceMetrics()
+        applyStorage()
+        focusGuard = FocusGuard(
+            activity = this,
+            showPlaying = { player.currentStatus().state == MatrixPlayer.State.PLAYING },
+            enabled = { config.holdFocus }
+        )
+        registerStorageWatcher()
         // Tied to the process, not the foreground. A TV that has dropped to its launcher is
         // exactly when you need to reach it, and stopping the server in onStop meant losing the
         // remote surface at the only moment it mattered.
@@ -96,9 +107,42 @@ class MainActivity : ComponentActivity() {
         player.surfaceMetrics = Triple(w, h, dpi)
     }
 
+    /**
+     * Points the sequence cache at a USB stick when one is present.
+     *
+     * Reads always span every volume, so pulling the stick loses only what was on it — a sequence
+     * cached internally keeps playing.
+     */
+    private fun applyStorage() {
+        val write = SequenceStorage.writeDir(this, config.preferRemovableStorage)
+        store.useDirectories(write, SequenceStorage.searchDirs(this))
+        android.util.Log.i("FppVm", "sequences write to " + write.absolutePath)
+    }
+
+    /** A stick appearing or disappearing changes where sequences should be written. */
+    private fun registerStorageWatcher() {
+        val filter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_MEDIA_MOUNTED)
+            addAction(Intent.ACTION_MEDIA_UNMOUNTED)
+            addAction(Intent.ACTION_MEDIA_REMOVED)
+            addAction(Intent.ACTION_MEDIA_EJECT)
+            addDataScheme("file")
+        }
+        val r = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: android.content.Context?, i: Intent?) = applyStorage()
+        }
+        try {
+            registerReceiver(r, filter)
+            storageWatcher = r
+        } catch (t: Throwable) {
+            android.util.Log.w("FppVm", "could not watch storage", t)
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         config = configStore.load()
+        applyStorage()
         player.applyConfig(config)
         publishSurfaceMetrics()
         player.start()
@@ -108,6 +152,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        // Ask for the screen back before tearing anything down, so a launcher grabbing focus
+        // mid-show does not end the show.
+        focusGuard?.onFocusLost()
         client?.stop()
         client = null
         player.stop()
@@ -134,7 +181,9 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 statusJson = { statusJson() },
-                identityJson = { identityJson() }
+                identityJson = { identityJson() },
+                onBringToFront = { bringToFront() },
+                storageJson = { storageJson() }
             )
             s.password = config.webPassword
             s.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
@@ -160,12 +209,32 @@ class MainActivity : ComponentActivity() {
             put("resyncJumps", st.resyncJumps)
             put("master", st.multiSync.lastMaster)
             put("syncPackets", st.syncPackets)
+            put("holdFocus", config.holdFocus)
+            put("focusReleasedMinutes", focusGuard?.releaseMinutesRemaining() ?: 0L)
             st.panel?.let {
                 put("panel", it.describe())
                 put("degraded", it.degraded)
                 put("cells", it.cellCount)
             }
         }
+    }
+
+    private fun storageJson(): JSONObject = JSONObject().apply {
+        val arr = org.json.JSONArray()
+        for (v in SequenceStorage.volumes(this@MainActivity)) {
+            arr.put(
+                JSONObject()
+                    .put("label", v.label)
+                    .put("removable", v.removable)
+                    .put("path", v.dir.absolutePath)
+                    .put("freeBytes", v.freeBytes)
+                    .put("totalBytes", v.totalBytes)
+                    .put("active", v.dir.absolutePath == store.dir.absolutePath)
+            )
+        }
+        put("volumes", arr)
+        put("preferRemovable", config.preferRemovableStorage)
+        put("writeDir", store.dir.absolutePath)
     }
 
     /**
@@ -194,6 +263,15 @@ class MainActivity : ComponentActivity() {
         } catch (_: Throwable) {
         }
         web = null
+        focusGuard?.cancel()
+        focusGuard = null
+        storageWatcher?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Throwable) {
+            }
+        }
+        storageWatcher = null
         if (APP_PLAYER === player) APP_PLAYER = null
     }
 
@@ -253,7 +331,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    private fun onKeyDownInner(keyCode: Int, event: KeyEvent): Boolean {
         when (keyCode) {
             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SETTINGS -> {
                 startActivity(Intent(this, SettingsActivity::class.java))
@@ -274,9 +352,66 @@ class MainActivity : ComponentActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
+    /**
+     * BACK is tracked rather than acted on immediately so a long press can release the focus hold.
+     * That escape has to exist: an app that is both the home screen and takes focus back could
+     * otherwise lock someone out of their own television.
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && config.holdFocus) {
+            event.startTracking()
+            return true
+        }
+        return onKeyDownInner(keyCode, event)
+    }
+
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            focusGuard?.let { g ->
+                g.release()
+                android.widget.Toast.makeText(
+                    this,
+                    "Focus hold released for " + FocusGuard.RELEASE_MINUTES + " minutes",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                return true
+            }
+        }
+        return super.onKeyLongPress(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        // A short press still means back; only the hold releases the guard.
+        if (keyCode == KeyEvent.KEYCODE_BACK && config.holdFocus && !event.isCanceled) {
+            finish()
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
+    /** Brings the show back to the front, for the web UI's button. */
+    fun bringToFront() {
+        runOnUiThread {
+            try {
+                startActivity(
+                    Intent(this, MainActivity::class.java).addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    )
+                )
+            } catch (t: Throwable) {
+                android.util.Log.w("FppVm", "bringToFront failed", t)
+            }
+        }
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) goImmersive()
+        if (hasFocus) {
+            focusGuard?.onFocusGained()
+            goImmersive()
+        } else {
+            focusGuard?.onFocusLost()
+        }
     }
 
     private fun goImmersive() {

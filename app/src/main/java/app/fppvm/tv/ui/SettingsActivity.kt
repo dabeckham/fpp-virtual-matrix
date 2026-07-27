@@ -119,6 +119,12 @@ class SettingsActivity : ComponentActivity() {
         },
         Setting("Web config", "browse to this TV to configure it", { yesNo(it.webServerEnabled) }) { c, _ ->
             c.copy(webServerEnabled = !c.webServerEnabled)
+        },
+        Setting("Use USB storage", "when a stick is plugged in", { yesNo(it.preferRemovableStorage) }) { c, _ ->
+            c.copy(preferRemovableStorage = !c.preferRemovableStorage)
+        },
+        Setting("Hold focus", "hold BACK to release", { yesNo(it.holdFocus) }) { c, _ ->
+            c.copy(holdFocus = !c.holdFocus)
         }
     )
 
