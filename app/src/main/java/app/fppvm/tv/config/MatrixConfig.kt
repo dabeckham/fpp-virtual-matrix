@@ -1,5 +1,9 @@
 package app.fppvm.tv.config
 
+import app.fppvm.tv.panel.Downsample
+import app.fppvm.tv.panel.EmitterShape
+import app.fppvm.tv.panel.PanelMode
+import app.fppvm.tv.panel.PanelPreset
 import org.json.JSONObject
 
 /**
@@ -57,7 +61,21 @@ data class MatrixConfig(
     /** Draw the stats overlay. */
     val showOverlay: Boolean = false,
     /** Colour depth of the render + upload path. See [ColorDepth]. */
-    val colorDepth: ColorDepth = ColorDepth.AUTO
+    val colorDepth: ColorDepth = ColorDepth.AUTO,
+
+    // --- Physical panel simulation. The look is specified in millimetres and the grid is solved
+    // for, because panels differ between installs but "this should look like P10" does not.
+    val panelMode: PanelMode = PanelMode.OFF,
+    /** Named product. Anything but CUSTOM overrides pitch/emitter/shape. */
+    val panelPreset: PanelPreset = PanelPreset.CUSTOM,
+    val pitchMm: Float = 25.4f,
+    val emitterMm: Float = 12.0f,
+    val emitterShape: EmitterShape = EmitterShape.ROUND,
+    /** 0 = trust the display's reported dpi (after a sanity check). */
+    val panelDpi: Float = 0f,
+    /** 0 = hard-edged apertures; higher spreads the bloom towards the cell corner. */
+    val bloomPercent: Int = 45,
+    val downsample: Downsample = Downsample.MAX
 ) {
     /**
      * HIGH keeps the full ARGB_8888 pipeline. FAST renders straight to RGB565, halving the bytes
@@ -80,6 +98,16 @@ data class MatrixConfig(
 
     val pixelCount: Int get() = width * height
 
+    /** Pitch actually requested, after applying a preset. */
+    val effectivePitchMm: Float get() = if (panelPreset.isCustom) pitchMm else panelPreset.pitchMm
+
+    /** Emitter size actually requested, after applying a preset. */
+    val effectiveEmitterMm: Float get() = if (panelPreset.isCustom) emitterMm else panelPreset.emitterMm
+
+    val effectiveShape: EmitterShape get() = if (panelPreset.isCustom) emitterShape else panelPreset.shape
+
+    val panelEnabled: Boolean get() = panelMode != PanelMode.OFF
+
     /** Resolved colour depth: AUTO becomes FAST above a quarter of a megapixel. */
     val useLowColor: Boolean
         get() = when (colorDepth) {
@@ -99,7 +127,12 @@ data class MatrixConfig(
         brightness = brightness.coerceIn(1, 100),
         gamma = gamma.coerceIn(0.1f, 4.0f),
         pixelGapPercent = pixelGapPercent.coerceIn(0, 90),
-        remoteOffsetMs = remoteOffsetMs.coerceIn(-10_000, 10_000)
+        remoteOffsetMs = remoteOffsetMs.coerceIn(-10_000, 10_000),
+        pitchMm = pitchMm.coerceIn(0.5f, 200f),
+        // An emitter can never be larger than its pitch; that is what makes the dark fraction.
+        emitterMm = emitterMm.coerceIn(0.2f, pitchMm.coerceIn(0.5f, 200f)),
+        panelDpi = if (panelDpi <= 0f) 0f else panelDpi.coerceIn(10f, 1200f),
+        bloomPercent = bloomPercent.coerceIn(0, 100)
     )
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -124,6 +157,14 @@ data class MatrixConfig(
         put("keepScreenOn", keepScreenOn)
         put("showOverlay", showOverlay)
         put("colorDepth", colorDepth.name)
+        put("panelMode", panelMode.name)
+        put("panelPreset", panelPreset.name)
+        put("pitchMm", pitchMm.toDouble())
+        put("emitterMm", emitterMm.toDouble())
+        put("emitterShape", emitterShape.name)
+        put("panelDpi", panelDpi.toDouble())
+        put("bloomPercent", bloomPercent)
+        put("downsample", downsample.name)
     }
 
     companion object {
@@ -171,7 +212,15 @@ data class MatrixConfig(
             idleMode = enumOr(o.optString("idleMode"), base.idleMode),
             keepScreenOn = o.optBoolean("keepScreenOn", base.keepScreenOn),
             showOverlay = o.optBoolean("showOverlay", base.showOverlay),
-            colorDepth = enumOr(o.optString("colorDepth"), base.colorDepth)
+            colorDepth = enumOr(o.optString("colorDepth"), base.colorDepth),
+            panelMode = enumOr(o.optString("panelMode"), base.panelMode),
+            panelPreset = enumOr(o.optString("panelPreset"), base.panelPreset),
+            pitchMm = o.optDouble("pitchMm", base.pitchMm.toDouble()).toFloat(),
+            emitterMm = o.optDouble("emitterMm", base.emitterMm.toDouble()).toFloat(),
+            emitterShape = enumOr(o.optString("emitterShape"), base.emitterShape),
+            panelDpi = o.optDouble("panelDpi", base.panelDpi.toDouble()).toFloat(),
+            bloomPercent = o.optInt("bloomPercent", base.bloomPercent),
+            downsample = enumOr(o.optString("downsample"), base.downsample)
         ).validated()
 
         private inline fun <reified T : Enum<T>> enumOr(name: String?, fallback: T): T {

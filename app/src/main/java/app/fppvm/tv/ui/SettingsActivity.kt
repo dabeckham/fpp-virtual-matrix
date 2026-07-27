@@ -83,6 +83,31 @@ class SettingsActivity : ComponentActivity() {
         },
         Setting("Stats overlay", "", { yesNo(it.showOverlay) }) { c, _ ->
             c.copy(showOverlay = !c.showOverlay)
+        },
+        Setting("Panel simulation", "look like real LEDs", { it.panelMode.name }) { c, d ->
+            c.copy(panelMode = cycle(app.fppvm.tv.panel.PanelMode.entries, c.panelMode, d))
+        },
+        Setting("Panel preset", "P10 / P5 / bullet", { it.panelPreset.label }) { c, d ->
+            c.copy(panelPreset = cycle(app.fppvm.tv.panel.PanelPreset.entries, c.panelPreset, d))
+        },
+        Setting("Pitch", "mm, when preset is Custom", { "%.2f".format(it.effectivePitchMm) }) { c, d ->
+            c.copy(panelPreset = app.fppvm.tv.panel.PanelPreset.CUSTOM, pitchMm = c.effectivePitchMm + d * 0.5f)
+        },
+        Setting("Emitter", "mm, when preset is Custom", { "%.2f".format(it.effectiveEmitterMm) }) { c, d ->
+            c.copy(panelPreset = app.fppvm.tv.panel.PanelPreset.CUSTOM, emitterMm = c.effectiveEmitterMm + d * 0.25f)
+        },
+        Setting("Emitter shape", "round bulb / square SMD", { it.effectiveShape.name }) { c, d ->
+            c.copy(panelPreset = app.fppvm.tv.panel.PanelPreset.CUSTOM, emitterShape = cycle(app.fppvm.tv.panel.EmitterShape.entries, c.effectiveShape, d))
+        },
+        Setting("Bloom", "% of the way to the cell corner", { "${it.bloomPercent}" }) { c, d ->
+            c.copy(bloomPercent = c.bloomPercent + d * 5)
+        },
+        Setting("Resample", "MAX keeps single lit pixels", { it.downsample.name }) { c, d ->
+            c.copy(downsample = cycle(app.fppvm.tv.panel.Downsample.entries, c.downsample, d))
+        },
+        Setting("Panel dpi", "0 = use the reported value", { if (it.panelDpi <= 0f) "auto" else "%.0f".format(it.panelDpi) }) { c, d ->
+            val next = if (c.panelDpi <= 0f && d > 0) 46f else c.panelDpi + d
+            c.copy(panelDpi = if (next < 10f) 0f else next)
         }
     )
 

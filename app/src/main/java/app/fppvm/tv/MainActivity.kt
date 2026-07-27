@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
         APP_PLAYER = player
 
         if (config.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        publishSurfaceMetrics()
         goImmersive()
     }
 
@@ -76,10 +77,23 @@ class MainActivity : ComponentActivity() {
         return configStore.applyOverride(json)
     }
 
+    /**
+     * Physical units only mean something if the dpi is right, and `xdpi` is a vendor constant
+     * rather than a measurement, so the solver sanity-checks it and the user can override.
+     */
+    private fun publishSurfaceMetrics() {
+        val dm = resources.displayMetrics
+        val w = if (dm.widthPixels > 0) dm.widthPixels else 1280
+        val h = if (dm.heightPixels > 0) dm.heightPixels else 720
+        val dpi = if (dm.xdpi > 1f) dm.xdpi else dm.densityDpi.toFloat()
+        player.surfaceMetrics = Triple(w, h, dpi)
+    }
+
     override fun onStart() {
         super.onStart()
         config = configStore.load()
         player.applyConfig(config)
+        publishSurfaceMetrics()
         player.start()
         startMultiSync()
         updateOverlay()
@@ -143,6 +157,7 @@ class MainActivity : ComponentActivity() {
                         )
                     )
                     appendLine("%.1f fps  decode %.1f ms  paint %.1f ms".format(s.fps, s.decodeMs, s.paintMs))
+                    s.panel?.let { appendLine(it.describe()) }
                     append("master ${s.multiSync.lastMaster}  rendered ${s.renderedFrames}  dropped ${s.droppedFrames}")
                     if (s.message.isNotEmpty()) append("\n${s.message}")
                 }

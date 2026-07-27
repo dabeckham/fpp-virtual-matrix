@@ -1,6 +1,7 @@
 package app.fppvm.tv.render
 
 import app.fppvm.tv.config.MatrixConfig
+import app.fppvm.tv.panel.Downsample
 import kotlin.math.pow
 
 /**
@@ -170,6 +171,94 @@ class MatrixRaster(config: MatrixConfig) {
         if (pixels565.size != n) pixels565 = ShortArray(n)
         java.util.Arrays.fill(pixels565, 0)
         return pixels565
+    }
+
+    /** Reduced grid output for panel simulation; sized cols*rows, reused across frames. */
+    var gridPixels: IntArray = IntArray(0)
+        private set
+
+    /**
+     * Resamples the source matrix onto a `cols x rows` grid of emitters.
+     *
+     * [Downsample.MAX] takes the brightest source pixel in each block rather than the mean. Light
+     * shows are sparse and high contrast — a single lit pixel chasing across a dark field is the
+     * whole point — and a block mean averages that pixel with hundreds of dark ones until it
+     * disappears. Mean is right for photographic content and wrong for this, so it is opt-in.
+     *
+     * When the grid is finer than the source (a coarse show on a P2.5 wall) blocks collapse to one
+     * pixel and this becomes nearest-neighbour replication, which is what pixel art wants.
+     */
+    fun renderGrid(
+        channels: ByteArray,
+        cols: Int,
+        rows: Int,
+        mode: Downsample,
+        offset: Int = 0
+    ): IntArray {
+        val n = cols * rows
+        if (gridPixels.size != n) gridPixels = IntArray(n)
+        val out = gridPixels
+        val srcW = config.width
+        val srcH = config.height
+        val table = lut
+        val order = config.colorOrder
+        val flipH = config.flipHorizontal
+        val flipV = config.flipVertical
+        val transpose = config.transpose
+        val limit = channels.size
+
+        var di = 0
+        for (cy in 0 until rows) {
+            val y0 = (cy.toLong() * srcH / rows).toInt()
+            val y1 = (((cy + 1).toLong() * srcH / rows).toInt()).coerceAtLeast(y0 + 1).coerceAtMost(srcH)
+            for (cx in 0 until cols) {
+                val x0 = (cx.toLong() * srcW / cols).toInt()
+                val x1 = (((cx + 1).toLong() * srcW / cols).toInt()).coerceAtLeast(x0 + 1).coerceAtMost(srcW)
+
+                var r = 0
+                var g = 0
+                var b = 0
+                var count = 0
+                for (sy in y0 until y1) {
+                    val my = if (flipV) srcH - 1 - sy else sy
+                    for (sx in x0 until x1) {
+                        val mx = if (flipH) srcW - 1 - sx else sx
+                        val pixelIndex = if (transpose) mx * srcH + my else my * srcW + mx
+                        val si = offset + pixelIndex * 3
+                        if (si < 0 || si + 2 >= limit) continue
+                        val pr = channels[si + order.r].toInt() and 0xFF
+                        val pg = channels[si + order.g].toInt() and 0xFF
+                        val pb = channels[si + order.b].toInt() and 0xFF
+                        if (mode == Downsample.MAX) {
+                            // Compare on luminance so the brightest *pixel* wins whole, rather
+                            // than mixing the red of one with the green of another.
+                            if (count == 0 || (pr * 2 + pg * 5 + pb) > (r * 2 + g * 5 + b)) {
+                                r = pr; g = pg; b = pb
+                            }
+                        } else {
+                            r += pr; g += pg; b += pb
+                        }
+                        count++
+                    }
+                }
+                if (count == 0) {
+                    out[di] = 0xFF000000.toInt()
+                } else {
+                    val fr: Int
+                    val fg: Int
+                    val fb: Int
+                    if (mode == Downsample.MAX) {
+                        fr = r; fg = g; fb = b
+                    } else {
+                        fr = r / count; fg = g / count; fb = b / count
+                    }
+                    out[di] = (0xFF shl 24) or
+                        (table[fr] shl 16) or (table[fg] shl 8) or table[fb]
+                }
+                di++
+            }
+        }
+        return out
     }
 
     fun blank(): IntArray {

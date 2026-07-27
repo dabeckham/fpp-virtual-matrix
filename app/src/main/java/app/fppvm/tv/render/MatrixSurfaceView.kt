@@ -285,6 +285,71 @@ class MatrixSurfaceView @JvmOverloads constructor(
         }
     }
 
+    // ---------------------------------------------------------------- panel simulation
+
+    private var panelMaskBitmap: Bitmap? = null
+    private var panelMaskKey: String = ""
+
+    /**
+     * Draws the show as a grid of physical emitters: one flat block of colour per cell, with the
+     * cached aperture/bloom mask over it. See [PanelMask] for why the mask carries the bloom.
+     */
+    fun presentPanel(
+        pixels: IntArray,
+        geometry: app.fppvm.tv.panel.PanelGeometry,
+        bloomPercent: Int
+    ): Boolean {
+        if (!surfaceReady) return false
+        synchronized(lock) {
+            val cols = geometry.cols
+            val rows = geometry.rows
+            if (cols <= 0 || rows <= 0 || pixels.size < cols * rows) return false
+            ensureBitmap(cols, rows, Bitmap.Config.ARGB_8888)
+            val bmp = bitmap ?: return false
+            bmp.setPixels(pixels, 0, cols, 0, 0, cols, rows)
+
+            val canvas = try {
+                holder.lockCanvas()
+            } catch (t: Throwable) {
+                null
+            } ?: return false
+            try {
+                canvas.drawColor(Color.BLACK, PorterDuff.Mode.SRC)
+                val left = (canvas.width - geometry.widthPx) / 2
+                val top = (canvas.height - geometry.heightPx) / 2
+                dstRect.set(left, top, left + geometry.widthPx, top + geometry.heightPx)
+                // Nearest neighbour: each cell must be a hard-edged block of one colour, because
+                // the mask carves the emitter shape out of it.
+                canvas.drawBitmap(bmp, srcRect, dstRect, bitmapPaint)
+
+                if (!geometry.degraded) {
+                    val mask = panelMaskFor(geometry, bloomPercent)
+                    if (mask != null) {
+                        canvas.drawBitmap(mask, dstRect.left.toFloat(), dstRect.top.toFloat(), maskPaint)
+                    }
+                }
+                drawStatus(canvas)
+            } finally {
+                try {
+                    holder.unlockCanvasAndPost(canvas)
+                } catch (_: Throwable) {
+                }
+            }
+            return true
+        }
+    }
+
+    private fun panelMaskFor(g: app.fppvm.tv.panel.PanelGeometry, bloomPercent: Int): Bitmap? {
+        val key = PanelMask.keyFor(g, bloomPercent)
+        val cached = panelMaskBitmap
+        if (cached != null && key == panelMaskKey) return cached
+        cached?.recycle()
+        val built = PanelMask.build(g, bloomPercent)
+        panelMaskBitmap = built
+        panelMaskKey = if (built != null) key else ""
+        return built
+    }
+
     private fun drawStatus(canvas: Canvas) {
         val text = statusText ?: return
         var y = 40f

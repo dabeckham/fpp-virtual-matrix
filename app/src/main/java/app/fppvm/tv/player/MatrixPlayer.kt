@@ -2,6 +2,8 @@ package app.fppvm.tv.player
 
 import android.util.Log
 import app.fppvm.tv.config.MatrixConfig
+import app.fppvm.tv.panel.PanelGeometry
+import app.fppvm.tv.panel.PanelSolver
 import app.fppvm.tv.fseq.FseqReader
 import app.fppvm.tv.fseq.SequenceStore
 import app.fppvm.tv.proto.MultiSyncStats
@@ -65,6 +67,8 @@ class MatrixPlayer(
         /** Moving average of raster + blit time per frame, milliseconds. */
         val paintMs: Float = 0f,
         val message: String = "",
+        /** Solved panel layout, when panel simulation is on. Null otherwise. */
+        val panel: PanelGeometry? = null,
         val multiSync: MultiSyncStats = MultiSyncStats()
     )
 
@@ -81,6 +85,40 @@ class MatrixPlayer(
 
     private val running = AtomicBoolean(false)
     private var thread: Thread? = null
+
+    @Volatile
+    private var panelGeometry: PanelGeometry? = null
+
+    /** Surface size and reported dpi, supplied by the activity; the solver needs both. */
+    @Volatile
+    var surfaceMetrics: Triple<Int, Int, Float> = Triple(1280, 720, 46f)
+        set(value) {
+            field = value
+            resolvePanel()
+        }
+
+    fun panelGeometry(): PanelGeometry? = panelGeometry
+
+    private fun resolvePanel() {
+        val c = config
+        if (!c.panelEnabled) {
+            panelGeometry = null
+            return
+        }
+        val (sw, sh, dpi) = surfaceMetrics
+        panelGeometry = PanelSolver.solve(
+            mode = c.panelMode,
+            pitchMm = c.effectivePitchMm,
+            emitterMm = c.effectiveEmitterMm,
+            shape = c.effectiveShape,
+            surfaceWidth = sw,
+            surfaceHeight = sh,
+            sourceCols = c.width,
+            sourceRows = c.height,
+            reportedDpi = dpi,
+            dpiOverride = c.panelDpi
+        )
+    }
 
     /** Guards [reader]/[window], which only the playback thread reads but the socket thread swaps. */
     private val readerLock = Any()
@@ -130,7 +168,8 @@ class MatrixPlayer(
         testPattern.reconfigure(next)
         if (frameBuffer.size != next.channelCount) frameBuffer = ByteArray(next.channelCount)
         view.setConfig(next)
-        view.requestLowColorSurface(next.useLowColor)
+        view.requestLowColorSurface(next.useLowColor && !next.panelEnabled)
+        resolvePanel()
         // The channel window is derived from the geometry, so re-open it against the same file.
         synchronized(readerLock) {
             val r = reader
@@ -356,7 +395,15 @@ class MatrixPlayer(
                         val tDecode0 = System.nanoTime()
                         val ok = win.readFrame(frame, frameBuffer)
                         val tPaint0 = System.nanoTime()
-                        val painted = if (cfg.useLowColor) {
+                        val geo = panelGeometry
+                        val painted = if (geo != null) {
+                            val px = if (ok) {
+                                raster.renderGrid(frameBuffer, geo.cols, geo.rows, cfg.downsample)
+                            } else {
+                                raster.renderGrid(ByteArray(0), geo.cols, geo.rows, cfg.downsample)
+                            }
+                            view.presentPanel(px, geo, cfg.bloomPercent)
+                        } else if (cfg.useLowColor) {
                             val px = if (ok) raster.render565(frameBuffer) else raster.blank565()
                             view.present565(px, raster.width, raster.height)
                         } else {
@@ -391,7 +438,8 @@ class MatrixPlayer(
                                     decodeErrors = win.decodeErrors,
                                     fps = lastFps,
                                     decodeMs = decodeMsAvg.toFloat(),
-                                    paintMs = paintMsAvg.toFloat()
+                                    paintMs = paintMsAvg.toFloat(),
+                                    panel = panelGeometry
                                 )
                             )
                         }
@@ -422,7 +470,13 @@ class MatrixPlayer(
         when (cfg.idleMode) {
             MatrixConfig.IdleMode.TEST_PATTERN -> {
                 val data = testPattern.render(elapsedMs)
-                if (cfg.useLowColor) {
+                val geo = panelGeometry
+                if (geo != null) {
+                    view.presentPanel(
+                        raster.renderGrid(data, geo.cols, geo.rows, cfg.downsample),
+                        geo, cfg.bloomPercent
+                    )
+                } else if (cfg.useLowColor) {
                     view.present565(raster.render565(data), raster.width, raster.height)
                 } else {
                     view.present(raster.render(data), raster.width, raster.height)

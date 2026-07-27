@@ -89,6 +89,23 @@ class DiagnosticsActivity : ComponentActivity() {
         )
         sb.appendLine("  colour order  ${config.colorOrder}   flipH=${config.flipHorizontal} flipV=${config.flipVertical} transpose=${config.transpose}")
         sb.appendLine("  brightness    ${config.brightness}%   gamma ${"%.2f".format(config.gamma)}")
+        if (config.panelEnabled) {
+            sb.appendLine()
+            sb.appendLine("PANEL SIMULATION")
+            sb.appendLine("  mode          ${config.panelMode}   preset ${config.panelPreset.label}")
+            sb.appendLine("  requested     pitch ${"%.2f".format(config.effectivePitchMm)} mm   emitter ${"%.2f".format(config.effectiveEmitterMm)} mm   ${config.effectiveShape}")
+            val g = status.panel
+            if (g == null) {
+                sb.appendLine("  achieved      (not solved yet)")
+            } else {
+                sb.appendLine("  achieved      pitch ${"%.2f".format(g.achievedPitchMm)} mm   emitter ${"%.2f".format(g.achievedEmitterMm)} mm")
+                sb.appendLine("  grid          ${g.cols} x ${g.rows} = ${g.cellCount} cells   cell ${"%.2f".format(g.cellPx)} px   emitter ${"%.2f".format(g.emitterPx)} px")
+                sb.appendLine("  lit area      ${"%.1f".format(g.openAreaPercent)}%   dpi ${"%.1f".format(g.dpi)}${if (config.panelDpi > 0f) " (manual)" else " (reported)"}")
+                sb.appendLine("  resample      ${config.downsample} from ${config.width} x ${config.height}   bloom ${config.bloomPercent}%")
+                if (g.degraded) sb.appendLine("  DEGRADED      ${g.note}")
+                else if (g.note.isNotEmpty()) sb.appendLine("  note          ${g.note}")
+            }
+        }
         sb.appendLine()
 
         sb.appendLine("PLAYBACK")
