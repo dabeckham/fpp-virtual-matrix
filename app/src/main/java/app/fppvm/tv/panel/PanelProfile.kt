@@ -141,7 +141,10 @@ object PanelSolver {
     fun isPlausibleDpi(dpi: Float, widthPx: Int, heightPx: Int): Boolean {
         if (dpi <= 1f || dpi.isNaN() || dpi.isInfinite()) return false
         val diagonalInches = hypot(widthPx / dpi, heightPx / dpi)
-        return diagonalInches in 10f..120f
+        // Wide on purpose. This is here to reject nonsense — a reported 2 dpi implies a 60 ft
+        // screen — not to have an opinion about form factors. A phone is ~5-7 in and a video
+        // wall can be 150.
+        return diagonalInches in 2f..200f
     }
 
     /**

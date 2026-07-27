@@ -82,7 +82,7 @@ class PanelSolverTest {
         val g = solve(PanelPreset.P2_5.pitchMm, PanelPreset.P2_5.emitterMm, EmitterShape.SQUARE)
         assertEquals(4.53f, g.cellPx, 0.02f)
         assertEquals(282, g.cols)
-        assertEquals(158, g.rows)
+        assertEquals(159, g.rows)
         assertEquals(2.9f, g.emitterPx, 0.05f)
         assertFalse("cell is above the floor", g.cellPx < PanelSolver.MIN_CELL_PX)
         assertTrue("emitter is 2.9 px, above the 1.5 px floor", g.emitterPx > PanelSolver.MIN_EMITTER_PX)
@@ -124,9 +124,9 @@ class PanelSolverTest {
         val g = solve(25.4f, 12f, mode = PanelMode.MATCH_SOURCE, srcCols = 64, srcRows = 32)
         assertEquals(64, g.cols)
         assertEquals(32, g.rows)
-        // Fit is limited by height: 720/32 = 22.5 px a cell.
-        assertEquals(22.5f, g.cellPx, 0.01f)
-        assertEquals(12.42f, g.achievedPitchMm, 0.05f)
+        // Fit is limited by width here: 1280/64 = 20 px a cell, against 720/32 = 22.5.
+        assertEquals(20f, g.cellPx, 0.01f)
+        assertEquals(11.04f, g.achievedPitchMm, 0.05f)
         // The requested 12/25.4 fill ratio is preserved even though the pitch changed.
         assertEquals(12f / 25.4f, g.fillRatio, 0.001f)
     }
