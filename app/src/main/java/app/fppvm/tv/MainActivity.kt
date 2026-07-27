@@ -183,7 +183,9 @@ class MainActivity : ComponentActivity() {
                 statusJson = { statusJson() },
                 identityJson = { identityJson() },
                 onBringToFront = { bringToFront() },
-                storageJson = { storageJson() }
+                storageJson = { storageJson() },
+                onPlayLocal = { name, loop -> player.playLocal(name, loop) },
+                onStopLocal = { player.stopLocal() }
             )
             s.password = config.webPassword
             s.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
@@ -209,6 +211,20 @@ class MainActivity : ComponentActivity() {
             put("resyncJumps", st.resyncJumps)
             put("master", st.multiSync.lastMaster)
             put("syncPackets", st.syncPackets)
+            // Header fields, mirroring what FPP's own status API exposes.
+            put("host_name", config.hostname.ifBlank { defaultHostname() })
+            put("host_description", "Android TV Virtual Matrix")
+            put("platform", "Android " + Build.VERSION.RELEASE)
+            put("version", BuildInfo.VERSION)
+            put("mode_name", "remote")
+            put("status_name", st.state.name.lowercase())
+            put("source", st.source.name)
+            put("current_sequence", st.sequence)
+            put("seconds_played", if (st.stepTimeMs > 0 && st.frame >= 0) st.frame * st.stepTimeMs / 1000 else 0)
+            put("seconds_remaining",
+                if (st.stepTimeMs > 0 && st.frame >= 0) (st.totalFrames - st.frame) * st.stepTimeMs / 1000 else 0)
+            put("uptimeSeconds", (android.os.SystemClock.elapsedRealtime() - startedAtElapsed) / 1000)
+            put("time", timeStamp())
             put("holdFocus", config.holdFocus)
             put("focusReleasedMinutes", focusGuard?.releaseMinutesRemaining() ?: 0L)
             st.panel?.let {
@@ -217,6 +233,20 @@ class MainActivity : ComponentActivity() {
                 put("cells", it.cellCount)
             }
         }
+    }
+
+    private val startedAtElapsed = android.os.SystemClock.elapsedRealtime()
+
+    /**
+     * UTC plus the collecting zone's offset. A time without its offset is ambiguous twice a year,
+     * and a status line you cannot place in time is not much of a status line.
+     */
+    private fun timeStamp(): String {
+        val utc = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        val local = java.text.SimpleDateFormat("HH:mm:ssXXX", java.util.Locale.US)
+        val now = java.util.Date()
+        return utc.format(now) + " (" + local.format(now) + " " + java.util.TimeZone.getDefault().id + ")"
     }
 
     private fun storageJson(): JSONObject = JSONObject().apply {

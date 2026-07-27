@@ -39,7 +39,10 @@ class WebConfigServer(
     private val identityJson: () -> JSONObject,
     /** Pulls the show back to the front — the TV may have dropped to its launcher. */
     private val onBringToFront: () -> Unit = {},
-    private val storageJson: () -> JSONObject = { JSONObject() }
+    private val storageJson: () -> JSONObject = { JSONObject() },
+    /** Start a cached sequence on the device's own clock. Returns false if it is not there. */
+    private val onPlayLocal: (String, Boolean) -> Boolean = { _, _ -> false },
+    private val onStopLocal: () -> Unit = {}
 ) : NanoHTTPD(port) {
 
     companion object {
@@ -48,6 +51,9 @@ class WebConfigServer(
 
         /** Uploads land here before being committed, so a torn transfer is never playable. */
         private const val PART_SUFFIX = ".upload"
+
+        /** Charset must be explicit or non-ASCII in the status strings arrives mangled. */
+        private const val JSON_MIME = "application/json; charset=utf-8"
     }
 
     private val configStore = ConfigStore(context)
@@ -113,7 +119,7 @@ class WebConfigServer(
                 Method.GET -> {
                     val all = LedProfiles.BUILT_IN + profileStore.load()
                     newFixedLengthResponse(
-                        Response.Status.OK, "application/json",
+                        Response.Status.OK, JSON_MIME,
                         LedProfiles.listToJson(all).toString()
                     )
                 }
@@ -132,6 +138,31 @@ class WebConfigServer(
         }
         if (uri == "/api/status") return json(Response.Status.OK, statusJson())
         if (uri == "/api/storage") return json(Response.Status.OK, storageJson())
+        if (uri == "/api/play" && method == Method.POST) {
+            val o = JSONObject(readBody(session))
+            val name = o.optString("name", "")
+            val ok = onPlayLocal(name, o.optBoolean("loop", true))
+            return json(
+                if (ok) Response.Status.OK else Response.Status.NOT_FOUND,
+                JSONObject().put("status", if (ok) "OK" else "no such sequence").put("name", name)
+            )
+        }
+        if (uri == "/api/stop" && method == Method.POST) {
+            onStopLocal()
+            return json(Response.Status.OK, JSONObject().put("status", "OK"))
+        }
+        if (uri == "/api/move" && method == Method.POST) {
+            val o = JSONObject(readBody(session))
+            val name = o.optString("name", "")
+            val removable = o.optString("to", "usb").equals("usb", ignoreCase = true)
+            val target = app.fppvm.tv.fseq.SequenceStorage.writeDir(context, removable)
+            val ok = sequences.moveTo(name, target)
+            return json(
+                if (ok) Response.Status.OK else Response.Status.INTERNAL_ERROR,
+                JSONObject().put("status", if (ok) "OK" else "move failed")
+                    .put("name", name).put("to", target.absolutePath)
+            )
+        }
         if (uri == "/api/focus" && method == Method.POST) {
             onBringToFront()
             return json(Response.Status.OK, JSONObject().put("status", "OK"))
@@ -143,10 +174,13 @@ class WebConfigServer(
         if (uri == "/api/files/sequences") {
             val arr = JSONArray()
             sequences.listCached().forEach {
-                arr.put(JSONObject().put("name", it.name).put("size", it.length()))
+                arr.put(
+                    JSONObject().put("name", it.name).put("size", it.length())
+                        .put("path", it.absolutePath)
+                )
             }
             return newFixedLengthResponse(
-                Response.Status.OK, "application/json",
+                Response.Status.OK, JSON_MIME,
                 JSONObject().put("status", "ok").put("files", arr).toString()
             )
         }
@@ -258,7 +292,7 @@ class WebConfigServer(
     }
 
     private fun json(status: Response.Status, body: JSONObject): Response =
-        newFixedLengthResponse(status, "application/json", body.toString())
+        newFixedLengthResponse(status, JSON_MIME, body.toString())
 
     private fun page(): Response {
         val html = try {
@@ -266,7 +300,7 @@ class WebConfigServer(
         } catch (t: Throwable) {
             "<h1>FPP Virtual Matrix</h1><p>config.html missing from assets</p>"
         }
-        return newFixedLengthResponse(Response.Status.OK, "text/html", html)
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
     }
 }
 

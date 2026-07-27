@@ -205,6 +205,37 @@ class SequenceStore(
         }
     }
 
+    /**
+     * Moves a cached sequence to another volume.
+     *
+     * Copy-then-delete rather than [File.renameTo], because a rename across mount points fails
+     * and that is the only direction anyone actually wants to move a file in.
+     */
+    fun moveTo(filename: String, targetDir: File): Boolean {
+        val name = sanitize(filename) ?: return false
+        val src = localFile(name) ?: return false
+        if (!targetDir.exists()) targetDir.mkdirs()
+        val dest = File(targetDir, name)
+        if (src.absolutePath == dest.absolutePath) return true
+        val tmp = File(targetDir, "$name.moving")
+        return try {
+            src.inputStream().use { i -> tmp.outputStream().use { o -> i.copyTo(o, 1 shl 20) } }
+            if (tmp.length() != src.length()) {
+                tmp.delete(); false
+            } else {
+                dest.delete()
+                if (!tmp.renameTo(dest)) {
+                    tmp.delete(); false
+                } else {
+                    src.delete(); true
+                }
+            }
+        } catch (t: Throwable) {
+            tmp.delete()
+            false
+        }
+    }
+
     /** Marks [file] as recently used so eviction keeps the sequences actually being played. */
     fun touch(file: File) {
         try {

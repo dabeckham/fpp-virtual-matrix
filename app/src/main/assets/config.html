@@ -9,7 +9,13 @@
 * { box-sizing:border-box; }
 body { margin:0; padding:14px 14px 40px; background:var(--bg); color:var(--fg);
        font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-h1 { font-size:18px; margin:0 0 2px; }
+.hdr { display:flex; gap:10px; align-items:center; background:var(--card); border:1px solid var(--line);
+        border-radius:10px; padding:10px 12px; margin-bottom:8px; flex-wrap:wrap; }
+.hdr-l { flex:1 1 40%; min-width:0; } .hdr-c { flex:1 1 30%; min-width:0; } .hdr-r { flex:0 1 auto; text-align:right; }
+.host { font-size:16px; font-weight:600; }
+.stat { font-size:15px; font-weight:600; color:var(--accent); }
+.stat.idle { color:var(--dim); } .stat.err { color:#ff7b7b; } .stat.blank { color:var(--warn); }
+.desc { font-size:12px; color:var(--dim); word-break:break-word; }
 .sub { color:var(--dim); font-size:13px; margin-bottom:14px; }
 .tabs { display:flex; gap:6px; margin-bottom:14px; position:sticky; top:0; background:var(--bg); padding:6px 0; z-index:5; }
 .tabs button { flex:1; background:var(--card); color:var(--dim); border:1px solid var(--line);
@@ -31,6 +37,7 @@ button { background:var(--accent); color:#06121f; border:0; border-radius:7px; p
          font-size:15px; font-weight:600; }
 button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
 button.danger { background:transparent; color:#ff7b7b; border:1px solid #4a2a2a; padding:7px 11px; font-size:13px; }
+button.sm { padding:7px 11px; font-size:13px; }
 .btns { display:flex; gap:8px; flex-wrap:wrap; }
 pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:pre-wrap; word-break:break-word; }
 .achieved { color:var(--accent); font-size:13px; margin-top:10px; }
@@ -45,7 +52,20 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
 </style>
 </head>
 <body>
-<h1>FPP Virtual Matrix</h1>
+<div class="hdr">
+  <div class="hdr-l">
+    <div class="host" id="h_host">…</div>
+    <div class="desc" id="h_desc"></div>
+  </div>
+  <div class="hdr-c">
+    <div class="stat" id="h_status">—</div>
+    <div class="desc" id="h_seq"></div>
+  </div>
+  <div class="hdr-r">
+    <div class="desc" id="h_time"></div>
+    <div class="desc" id="h_up"></div>
+  </div>
+</div>
 <div class="sub" id="sub">connecting…</div>
 
 <div class="tabs">
@@ -131,6 +151,14 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
     <h2>Display</h2>
     <div class="row"><label for="holdFocus">Hold focus</label><select id="holdFocus"><option value="false">Off</option><option value="true">Keep the show on screen</option></select></div>
     <div class="row"><label for="showOverlay">Stats overlay</label><select id="showOverlay"><option value="false">Off</option><option value="true">On</option></select></div>
+    <div class="row">
+      <label for="idleMode">When idle</label>
+      <select id="idleMode">
+        <option value="BLACK">Black</option>
+        <option value="TEST_PATTERN">Test pattern</option>
+        <option value="STATUS">Status text</option>
+      </select>
+    </div>
     <div class="btns"><button id="focus">Bring show to front</button></div>
     <div class="achieved" id="focusNote"></div>
   </div>
@@ -147,6 +175,7 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
   </div>
   <div class="card">
     <h2>Sequences</h2>
+    <div class="btns" style="margin-bottom:10px"><button class="ghost" id="stopLocal">Stop local playback</button></div>
     <div id="fileList"><span class="sub">…</span></div>
   </div>
 </div>
@@ -156,7 +185,7 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
 const NUM = ["pitchMm","emitterMm","louvrePercent","bloomPercent","brightness","gamma","panelDpi"];
 const PLAIN = ["width","height","startChannel","remoteOffsetMs"];
 const SEL = ["emitterShape","substrateColor","downsample","panelMode","colorOrder",
-             "holdFocus","showOverlay","autoFetchSequences","preferRemovableStorage"];
+             "holdFocus","showOverlay","autoFetchSequences","preferRemovableStorage","idleMode"];
 const DEC = { pitchMm:2, emitterMm:2, gamma:2 };
 let cfg = {}, sending = false, queued = null;
 
@@ -214,6 +243,7 @@ document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click
 
 $("profile").addEventListener("change", () => push({ profileId: $("profile").value, applyProfile: true }));
 $("reload").addEventListener("click", load);
+$("stopLocal").addEventListener("click", async () => { await fetch("api/stop", { method:"POST" }); poll(); });
 $("focus").addEventListener("click", async () => {
   await fetch("api/focus", { method:"POST" });
   $("focusNote").textContent = "asked the TV to bring the show forward";
@@ -252,12 +282,31 @@ async function loadFiles() {
 
     const f = await (await fetch("api/files/sequences")).json();
     const list = f.files || [];
-    $("fileList").innerHTML = list.length ? list.map(x =>
-      '<div class="file"><span class="n">' + x.name + '</span><span class="s">' + bytes(x.size) +
-      '</span><button class="danger" data-d="' + encodeURIComponent(x.name) + '">Delete</button></div>').join("")
-      : '<span class="sub">no sequences yet</span>';
+    $("fileList").innerHTML = list.length ? list.map(x => {
+      const e = encodeURIComponent(x.name);
+      const onUsb = (x.path || "").indexOf("/storage/") === 0;
+      return '<div class="file"><span class="n">' + x.name +
+        (onUsb ? ' <span class="s">· USB</span>' : '') +
+        '</span><span class="s">' + bytes(x.size) + '</span>' +
+        '<button class="ghost sm" data-p="' + e + '">Play</button>' +
+        '<button class="ghost sm" data-m="' + e + '" data-to="' + (onUsb ? 'internal' : 'usb') + '">' +
+          (onUsb ? '&rarr; TV' : '&rarr; USB') + '</button>' +
+        '<button class="danger" data-d="' + e + '">Delete</button></div>';
+    }).join("") : '<span class="sub">no sequences yet</span>';
+
     document.querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", async () => {
       await fetch("api/file/sequences/" + b.dataset.d, { method:"DELETE" });
+      loadFiles();
+    }));
+    document.querySelectorAll("[data-p]").forEach(b => b.addEventListener("click", async () => {
+      await fetch("api/play", { method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify({ name: decodeURIComponent(b.dataset.p), loop: true }) });
+      poll();
+    }));
+    document.querySelectorAll("[data-m]").forEach(b => b.addEventListener("click", async () => {
+      b.textContent = "…";
+      await fetch("api/move", { method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify({ name: decodeURIComponent(b.dataset.m), to: b.dataset.to }) });
       loadFiles();
     }));
   } catch (e) { $("fileList").innerHTML = '<span class="sub">unavailable</span>'; }
@@ -268,6 +317,18 @@ async function poll() {
     const s = await (await fetch("api/status")).json();
     $("status").textContent = Object.entries(s).filter(([k]) => k !== "panel")
       .map(([k,v]) => k.padEnd(20) + v).join("\n");
+    $("h_host").textContent = s.host_name || "";
+    $("h_desc").textContent = (s.host_description || "") + " · " + (s.platform || "") + " · v" + (s.version || "");
+    const st = (s.status_name || "").toUpperCase();
+    const el = $("h_status");
+    el.textContent = st + (s.source === "LOCAL" ? "  (local)" : "");
+    el.className = "stat" + (st === "PLAYING" ? "" : st === "BLANKED" ? " blank" : st === "ERROR" ? " err" : " idle");
+    $("h_seq").textContent = s.current_sequence
+      ? s.current_sequence + "  " + s.seconds_played + "s / " + (Number(s.seconds_played) + Number(s.seconds_remaining)) + "s"
+      : "no sequence";
+    $("h_time").textContent = s.time || "";
+    const up = Number(s.uptimeSeconds || 0);
+    $("h_up").textContent = "up " + Math.floor(up/3600) + "h " + Math.floor(up%3600/60) + "m";
     if (s.panel) { $("achieved").textContent = s.panel; $("achieved").className = s.degraded ? "achieved warn" : "achieved"; }
     if (s.focusReleasedMinutes > 0) $("focusNote").textContent = "focus hold released for " + s.focusReleasedMinutes + " more minutes";
   } catch (e) { $("status").textContent = "no status"; }

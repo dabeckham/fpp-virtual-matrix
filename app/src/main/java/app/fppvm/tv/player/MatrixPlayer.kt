@@ -47,6 +47,9 @@ class MatrixPlayer(
 
     enum class State { IDLE, WAITING_FOR_FILE, PLAYING, BLANKED, ERROR }
 
+    /** Where the timing is coming from. */
+    enum class Source { MASTER, LOCAL }
+
     data class Status(
         val state: State = State.IDLE,
         val sequence: String = "",
@@ -67,6 +70,8 @@ class MatrixPlayer(
         /** Moving average of raster + blit time per frame, milliseconds. */
         val paintMs: Float = 0f,
         val message: String = "",
+        val source: Source = Source.MASTER,
+        val loop: Boolean = false,
         /** Solved panel layout, when panel simulation is on. Null otherwise. */
         val panel: PanelGeometry? = null,
         val multiSync: MultiSyncStats = MultiSyncStats()
@@ -129,6 +134,13 @@ class MatrixPlayer(
 
     @Volatile
     private var frameBuffer = ByteArray(initialConfig.channelCount)
+
+    /** Playing a file on our own clock, with no master. Cleared the moment one appears. */
+    @Volatile
+    private var localPlayback = false
+
+    @Volatile
+    private var localLoop = true
 
     @Volatile
     private var status = Status()
@@ -208,11 +220,16 @@ class MatrixPlayer(
             openSequence(filename, masterIp, startImmediately = true, joinFrame = frameNumber, joinSeconds = secondsElapsed)
             return
         }
+        localPlayback = false
         clock.onSync(frameNumber, secondsElapsed, now)
     }
 
     override fun onBlank(masterIp: String) {
+        // A blank is an instruction, not an absence of one. Falling back to the idle pattern
+        // here would light this panel up at the exact moment every other controller in the
+        // show goes dark.
         clock.stop()
+        localPlayback = false
         publish(status.copy(state = State.BLANKED, frame = -1, message = "blanked by $masterIp"))
     }
 
@@ -234,6 +251,41 @@ class MatrixPlayer(
     override fun onStats(stats: MultiSyncStats) {
         status = status.copy(multiSync = stats)
     }
+
+    // ---------------------------------------------------------------- local playback
+
+    /**
+     * Plays a cached sequence on our own clock, with no master.
+     *
+     * For checking a file, or running a panel standalone. A master always wins: the first sync
+     * packet for anything else drops local playback, so this can never fight a live show.
+     */
+    fun playLocal(filename: String, loop: Boolean = true): Boolean {
+        val file = store.localFile(filename) ?: return false
+        loadLocal(file, masterIp = "", startImmediately = true)
+        localLoop = loop
+        localPlayback = true
+        publish(
+            status.copy(
+                state = State.PLAYING, sequence = file.name,
+                source = Source.LOCAL, loop = loop, message = "playing locally"
+            )
+        )
+        return true
+    }
+
+    fun stopLocal() {
+        localPlayback = false
+        clock.stop()
+        synchronized(readerLock) {
+            reader?.close()
+            reader = null
+            window = null
+        }
+        publish(status.copy(state = State.IDLE, sequence = "", frame = -1, source = Source.MASTER, message = ""))
+    }
+
+    fun isPlayingLocally(): Boolean = localPlayback
 
     // ---------------------------------------------------------------- sequence loading
 
@@ -386,8 +438,17 @@ class MatrixPlayer(
             val now = System.nanoTime()
             val cfg = config
 
-            val frame = if (clock.isRunning) clock.frameAt(now) else -1
-            val masterQuiet = clock.millisSinceSync(now) > MASTER_TIMEOUT_MS
+            var frame = if (clock.isRunning) clock.frameAt(now) else -1
+            // A local file has no master, so the silence timeout must not apply to it.
+            val masterQuiet = !localPlayback && clock.millisSinceSync(now) > MASTER_TIMEOUT_MS
+            if (frame < 0 && localPlayback && clock.isRunning) {
+                if (localLoop) {
+                    clock.start(0, now)
+                    frame = 0
+                } else {
+                    localPlayback = false
+                }
+            }
 
             if (frame >= 0 && !masterQuiet) {
                 if (frame != lastFrame) {
@@ -470,7 +531,9 @@ class MatrixPlayer(
     }
 
     private fun renderIdle(cfg: MatrixConfig, elapsedMs: Long) {
-        when (cfg.idleMode) {
+        // BLANKED came from the master telling the show to go dark. Honour it over idleMode.
+        val mode = if (status.state == State.BLANKED) MatrixConfig.IdleMode.BLACK else cfg.idleMode
+        when (mode) {
             MatrixConfig.IdleMode.TEST_PATTERN -> {
                 val data = testPattern.render(elapsedMs)
                 val geo = panelGeometry
