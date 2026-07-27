@@ -247,6 +247,8 @@ class MatrixPlayer(
                 window = newWindow
             }
             clock.configure(newReader.header.stepTimeMs, newReader.header.numFrames)
+            decodeMsAvg = 0.0
+            paintMsAvg = 0.0
             if (startImmediately) {
                 clock.start(0, System.nanoTime())
                 if (joinSeconds > 0f || joinFrame > 0) clock.onSync(joinFrame, joinSeconds, System.nanoTime())
@@ -395,7 +397,11 @@ class MatrixPlayer(
                         }
                     }
                 }
-                sleepUntilNextFrame(now)
+                // Re-read the clock: `now` was taken before decode and paint, and on a large
+                // matrix that work is most of a frame. Sleeping on the stale value adds a whole
+                // extra frame time per frame, which at 64x32 is invisible and at 1280x720 halves
+                // the rate.
+                sleepUntilNextFrame(System.nanoTime())
             } else {
                 if (clock.isRunning && masterQuiet) {
                     clock.stop()
@@ -458,7 +464,10 @@ class MatrixPlayer(
         val step = clock.stepTimeMs.coerceAtLeast(1)
         val pos = clock.positionAt(nowNanos)
         val fractionRemaining = 1.0 - (pos - Math.floor(pos))
-        val waitMs = (fractionRemaining * step).toLong().coerceIn(1L, step.toLong())
+        // Zero is a legitimate answer: when the frame took longer than its step time we are
+        // already late for the next one and must not add to it.
+        val waitMs = (fractionRemaining * step).toLong().coerceIn(0L, step.toLong())
+        if (waitMs <= 0L) return
         try {
             Thread.sleep(waitMs)
         } catch (e: InterruptedException) {
