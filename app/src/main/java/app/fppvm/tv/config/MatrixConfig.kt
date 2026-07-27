@@ -55,8 +55,18 @@ data class MatrixConfig(
     /** Keep the screen on while the app is foreground. */
     val keepScreenOn: Boolean = true,
     /** Draw the stats overlay. */
-    val showOverlay: Boolean = false
+    val showOverlay: Boolean = false,
+    /** Colour depth of the render + upload path. See [ColorDepth]. */
+    val colorDepth: ColorDepth = ColorDepth.AUTO
 ) {
+    /**
+     * HIGH keeps the full ARGB_8888 pipeline. FAST renders straight to RGB565, halving the bytes
+     * pushed per frame. AUTO picks FAST once the matrix is big enough for that to matter — on a
+     * panel that composites at 16 bits it is visually identical, and on a large matrix it is the
+     * difference between hitting the frame budget and not.
+     */
+    enum class ColorDepth { AUTO, HIGH, FAST }
+
     enum class ColorOrder(val r: Int, val g: Int, val b: Int) {
         RGB(0, 1, 2), RBG(0, 2, 1), GRB(1, 0, 2), GBR(2, 0, 1), BRG(1, 2, 0), BGR(2, 1, 0)
     }
@@ -69,6 +79,14 @@ data class MatrixConfig(
     val startChannelZeroBased: Int get() = (startChannel - 1).coerceAtLeast(0)
 
     val pixelCount: Int get() = width * height
+
+    /** Resolved colour depth: AUTO becomes FAST above a quarter of a megapixel. */
+    val useLowColor: Boolean
+        get() = when (colorDepth) {
+            ColorDepth.HIGH -> false
+            ColorDepth.FAST -> true
+            ColorDepth.AUTO -> pixelCount > 250_000
+        }
     val channelCount: Int get() = width * height * 3
 
     /** The `"start-count"` string FPP expects in a ping packet's ranges field. */
@@ -105,6 +123,7 @@ data class MatrixConfig(
         put("idleMode", idleMode.name)
         put("keepScreenOn", keepScreenOn)
         put("showOverlay", showOverlay)
+        put("colorDepth", colorDepth.name)
     }
 
     companion object {
@@ -151,7 +170,8 @@ data class MatrixConfig(
             remoteOffsetMs = o.optInt("remoteOffsetMs", base.remoteOffsetMs),
             idleMode = enumOr(o.optString("idleMode"), base.idleMode),
             keepScreenOn = o.optBoolean("keepScreenOn", base.keepScreenOn),
-            showOverlay = o.optBoolean("showOverlay", base.showOverlay)
+            showOverlay = o.optBoolean("showOverlay", base.showOverlay),
+            colorDepth = enumOr(o.optString("colorDepth"), base.colorDepth)
         ).validated()
 
         private inline fun <reified T : Enum<T>> enumOr(name: String?, fallback: T): T {

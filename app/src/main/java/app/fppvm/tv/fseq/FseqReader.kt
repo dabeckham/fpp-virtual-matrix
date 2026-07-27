@@ -194,6 +194,9 @@ class FseqReader private constructor(
         private var cachedFrameCount = 0
         private var cache: ByteArray = ByteArray(0)
 
+        /** Staging buffer for one-shot block decompression; grown on demand, reused after that. */
+        private var blockStaging: ByteArray = ByteArray(0)
+
         /** True when the file supplies at least one byte of the requested range. */
         val hasData: Boolean get() = spans.isNotEmpty()
 
@@ -282,6 +285,42 @@ class FseqReader private constructor(
             return done
         }
 
+        /**
+         * One-shot block decode, then copy each frame's spans out of the staging buffer.
+         * Returns the number of frames produced, or 0 to fall back to the streaming path.
+         */
+        private fun decodeWholeBlock(
+            compressed: ByteArray,
+            wholeSize: Int,
+            skipFrames: Int,
+            count: Int
+        ): Int {
+            val staging = try {
+                if (blockStaging.size < wholeSize) ByteArray(wholeSize).also { blockStaging = it } else blockStaging
+            } catch (t: OutOfMemoryError) {
+                blockStaging = ByteArray(0)
+                return 0
+            }
+            val produced = try {
+                ZstdSupport.decompressWhole(compressed, staging, wholeSize)
+            } catch (t: Throwable) {
+                return 0
+            }
+            val framesAvailable = produced / header.frameSize
+            var done = 0
+            for (f in 0 until count) {
+                val srcFrame = skipFrames + f
+                if (srcFrame >= framesAvailable) break
+                val srcBase = srcFrame * header.frameSize
+                val destBase = f * channelCount
+                for (s in spans) {
+                    System.arraycopy(staging, srcBase + s.srcOffset, cache, destBase + s.destOffset, s.length)
+                }
+                done = f + 1
+            }
+            return done
+        }
+
         /** Decodes [count] frames from [block], after discarding [skipFrames] leading frames. */
         private fun readCompressed(block: FseqHeader.Block, skipFrames: Int, count: Int): Int {
             if (block.compressedLength <= 0 || block.compressedLength > MAX_COMPRESSED_BLOCK_BYTES) return 0
@@ -292,6 +331,18 @@ class FseqReader private constructor(
             } catch (t: Throwable) {
                 return 0
             }
+            // Preferred path: hand libzstd the whole block at once. Costs a staging buffer of
+            // framesInBlock * frameSize, so it is only taken when that fits the cache budget.
+            if (header.compression == FseqHeader.Compression.ZSTD) {
+                val blockFrames = skipFrames + count
+                val whole = blockFrames.toLong() * header.frameSize
+                if (whole in 1..MAX_CACHE_BYTES) {
+                    val decoded = decodeWholeBlock(compressed, whole.toInt(), skipFrames, count)
+                    if (decoded > 0) return decoded
+                    // fall through to the stream, which also reports partial blocks properly
+                }
+            }
+
             val stream: InputStream = try {
                 when (header.compression) {
                     FseqHeader.Compression.ZSTD -> ZstdSupport.decompressingStream(compressed)

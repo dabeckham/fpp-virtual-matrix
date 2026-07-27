@@ -114,6 +114,64 @@ class MatrixRaster(config: MatrixConfig) {
         return out
     }
 
+    /** RGB565 output, half the bytes of [pixels]. Allocated only if the 565 path is used. */
+    var pixels565: ShortArray = ShortArray(0)
+        private set
+
+    /**
+     * Renders straight to RGB565.
+     *
+     * The test panel composites at 16 bits (proven by comparing a screenshot against known source
+     * values), so an ARGB_8888 intermediate buys nothing there and costs twice the bytes through
+     * the upload and the blit. At 921 600 pixels a frame that is the difference between fitting a
+     * 50 ms budget and not.
+     */
+    fun render565(channels: ByteArray, offset: Int = 0): ShortArray {
+        val n = config.width * config.height
+        if (pixels565.size != n) pixels565 = ShortArray(n)
+        val out = pixels565
+        if (!config.flipHorizontal && !config.flipVertical && !config.transpose &&
+            config.colorOrder == MatrixConfig.ColorOrder.RGB &&
+            offset >= 0 && offset + n * 3 <= channels.size
+        ) {
+            var si = offset
+            if (identityTone) {
+                for (di in 0 until n) {
+                    val r = channels[si].toInt() and 0xF8
+                    val g = channels[si + 1].toInt() and 0xFC
+                    val b = (channels[si + 2].toInt() and 0xFF) ushr 3
+                    out[di] = ((r shl 8) or (g shl 3) or b).toShort()
+                    si += 3
+                }
+            } else {
+                val table = lut
+                for (di in 0 until n) {
+                    val r = table[channels[si].toInt() and 0xFF] and 0xF8
+                    val g = table[channels[si + 1].toInt() and 0xFF] and 0xFC
+                    val b = table[channels[si + 2].toInt() and 0xFF] ushr 3
+                    out[di] = ((r shl 8) or (g shl 3) or b).toShort()
+                    si += 3
+                }
+            }
+            return out
+        }
+        // Any non-trivial orientation: reuse the general ARGB path and pack down, which keeps one
+        // implementation of the geometry rather than two that can drift apart.
+        val argb = renderGeneral(channels, offset)
+        for (i in 0 until n) {
+            val p = argb[i]
+            out[i] = ((((p ushr 16) and 0xF8) shl 8) or (((p ushr 8) and 0xFC) shl 3) or ((p and 0xFF) ushr 3)).toShort()
+        }
+        return out
+    }
+
+    fun blank565(): ShortArray {
+        val n = config.width * config.height
+        if (pixels565.size != n) pixels565 = ShortArray(n)
+        java.util.Arrays.fill(pixels565, 0)
+        return pixels565
+    }
+
     fun blank(): IntArray {
         java.util.Arrays.fill(pixels, 0xFF000000.toInt())
         return pixels

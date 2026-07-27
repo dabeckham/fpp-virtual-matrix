@@ -37,6 +37,7 @@ class MatrixSurfaceView @JvmOverloads constructor(
     private var bitmap: Bitmap? = null
     private var bitmapW = 0
     private var bitmapH = 0
+    private var bitmapConfig: Bitmap.Config = Bitmap.Config.ARGB_8888
 
     private val srcRect = Rect()
     private val dstRect = Rect()
@@ -79,13 +80,76 @@ class MatrixSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun ensureBitmap(w: Int, h: Int) {
-        if (bitmapW == w && bitmapH == h && bitmap != null) return
+    private fun ensureBitmap(w: Int, h: Int, cfg: Bitmap.Config = bitmapConfig) {
+        if (bitmapW == w && bitmapH == h && bitmapConfig == cfg && bitmap != null) return
         bitmap?.recycle()
-        bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bitmap = Bitmap.createBitmap(w, h, cfg)
         bitmapW = w
         bitmapH = h
+        bitmapConfig = cfg
         srcRect.set(0, 0, w, h)
+    }
+
+    /**
+     * Uploads RGB565 [pixels] and blits them.
+     *
+     * Paired with a 565 surface this is the cheapest path there is: half the bytes of ARGB_8888
+     * through the upload, and a blit with no format conversion. On a panel that composites at 16
+     * bits anyway it is visually identical.
+     */
+    fun present565(pixels: ShortArray, w: Int, h: Int): Boolean {
+        if (!surfaceReady) return false
+        synchronized(lock) {
+            ensureBitmap(w, h, Bitmap.Config.RGB_565)
+            val bmp = bitmap ?: return false
+            if (pixels.size < w * h) return false
+            val buf = shortBuffer(pixels, w * h)
+            bmp.copyPixelsFromBuffer(buf)
+
+            val canvas = try {
+                holder.lockCanvas()
+            } catch (t: Throwable) {
+                null
+            } ?: return false
+            try {
+                drawFrame(canvas, bmp)
+            } finally {
+                try {
+                    holder.unlockCanvasAndPost(canvas)
+                } catch (_: Throwable) {
+                }
+            }
+            return true
+        }
+    }
+
+    private var shortBuf: java.nio.ShortBuffer? = null
+    private var shortBufBacking: ShortArray? = null
+
+    /** Caches the wrapper by array identity — a resize hands us a different array of any size. */
+    private fun shortBuffer(pixels: ShortArray, count: Int): java.nio.ShortBuffer {
+        var b = shortBuf
+        if (b == null || shortBufBacking !== pixels) {
+            b = java.nio.ShortBuffer.wrap(pixels)
+            shortBuf = b
+            shortBufBacking = pixels
+        }
+        b.clear()
+        b.limit(count)
+        return b
+    }
+
+    /**
+     * Asks for a 16-bit surface so the blit is a straight copy rather than a per-pixel conversion.
+     * Only worth doing for the 565 path; the compositor is free to ignore it.
+     */
+    fun requestLowColorSurface(enable: Boolean) {
+        try {
+            holder.setFormat(
+                if (enable) android.graphics.PixelFormat.RGB_565 else android.graphics.PixelFormat.RGBA_8888
+            )
+        } catch (_: Throwable) {
+        }
     }
 
     /**

@@ -130,6 +130,7 @@ class MatrixPlayer(
         testPattern.reconfigure(next)
         if (frameBuffer.size != next.channelCount) frameBuffer = ByteArray(next.channelCount)
         view.setConfig(next)
+        view.requestLowColorSurface(next.useLowColor)
         // The channel window is derived from the geometry, so re-open it against the same file.
         synchronized(readerLock) {
             val r = reader
@@ -353,8 +354,13 @@ class MatrixPlayer(
                         val tDecode0 = System.nanoTime()
                         val ok = win.readFrame(frame, frameBuffer)
                         val tPaint0 = System.nanoTime()
-                        val pixels = if (ok) raster.render(frameBuffer) else raster.blank()
-                        val painted = view.present(pixels, raster.width, raster.height)
+                        val painted = if (cfg.useLowColor) {
+                            val px = if (ok) raster.render565(frameBuffer) else raster.blank565()
+                            view.present565(px, raster.width, raster.height)
+                        } else {
+                            val px = if (ok) raster.render(frameBuffer) else raster.blank()
+                            view.present(px, raster.width, raster.height)
+                        }
                         val tEnd = System.nanoTime()
                         if (painted) rendered++ else dropped++
                         lastFrame = frame
@@ -410,14 +416,22 @@ class MatrixPlayer(
         when (cfg.idleMode) {
             MatrixConfig.IdleMode.TEST_PATTERN -> {
                 val data = testPattern.render(elapsedMs)
-                view.present(raster.render(data), raster.width, raster.height)
+                if (cfg.useLowColor) {
+                    view.present565(raster.render565(data), raster.width, raster.height)
+                } else {
+                    view.present(raster.render(data), raster.width, raster.height)
+                }
             }
             MatrixConfig.IdleMode.STATUS -> {
                 view.statusText = describeIdle()
                 view.presentBlank()
             }
             MatrixConfig.IdleMode.BLACK -> {
-                view.present(raster.blank(), raster.width, raster.height)
+                if (cfg.useLowColor) {
+                    view.present565(raster.blank565(), raster.width, raster.height)
+                } else {
+                    view.present(raster.blank(), raster.width, raster.height)
+                }
             }
         }
     }

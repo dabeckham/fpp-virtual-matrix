@@ -84,4 +84,46 @@ class MatrixRasterFastPathTest {
         assertTrue("the pixel buffer must be reused", first === second)
         assertTrue(first.size == 1280 * 720)
     }
+
+    @Test
+    fun `the 565 path is the 8888 path quantised, not a different image`() {
+        val w = 11
+        val h = 9
+        val src = data(w * h)
+        val c = MatrixConfig(width = w, height = h)
+        val r = MatrixRaster(c)
+        val argb = r.render(src).copyOf()
+        val packed = r.render565(src)
+        for (i in 0 until w * h) {
+            val expect = ((((argb[i] ushr 16) and 0xF8) shl 8) or
+                (((argb[i] ushr 8) and 0xFC) shl 3) or
+                ((argb[i] and 0xFF) ushr 3)).toShort()
+            org.junit.Assert.assertEquals("pixel $i", expect, packed[i])
+        }
+    }
+
+    @Test
+    fun `565 honours flips through the shared geometry path`() {
+        val w = 6
+        val h = 5
+        val src = data(w * h)
+        val c = MatrixConfig(width = w, height = h, flipHorizontal = true, flipVertical = true)
+        val r = MatrixRaster(c)
+        val packed = r.render565(src).copyOf()
+        val argb = r.render(src)
+        for (i in 0 until w * h) {
+            val expect = ((((argb[i] ushr 16) and 0xF8) shl 8) or
+                (((argb[i] ushr 8) and 0xFC) shl 3) or
+                ((argb[i] and 0xFF) ushr 3)).toShort()
+            org.junit.Assert.assertEquals("pixel $i", expect, packed[i])
+        }
+    }
+
+    @Test
+    fun `auto colour depth switches on matrix size, not on guesswork`() {
+        assertTrue(!MatrixConfig(width = 64, height = 32).useLowColor)
+        assertTrue(MatrixConfig(width = 1280, height = 720).useLowColor)
+        assertTrue(!MatrixConfig(width = 1280, height = 720, colorDepth = MatrixConfig.ColorDepth.HIGH).useLowColor)
+        assertTrue(MatrixConfig(width = 8, height = 8, colorDepth = MatrixConfig.ColorDepth.FAST).useLowColor)
+    }
 }

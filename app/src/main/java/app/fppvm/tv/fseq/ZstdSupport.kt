@@ -48,4 +48,27 @@ object ZstdSupport {
     @Throws(Exception::class)
     fun decompressingStream(compressed: ByteArray): InputStream =
         com.github.luben.zstd.ZstdInputStream(ByteArrayInputStream(compressed))
+
+    /**
+     * Decompresses a whole block in one call, returning the number of bytes produced.
+     *
+     * Measured on the test TV, the streaming path above manages about 11 MiB/s — nowhere near what
+     * libzstd does natively — because every read crosses JNI and lands in an intermediate buffer.
+     * One-shot decompression hands libzstd the whole block and gets it back in a single crossing.
+     *
+     * This needs the decompressed size up front. FPP writes blocks with the streaming API and
+     * `ZSTD_e_end`, which does not record the content size in the frame header, so it cannot be
+     * read from the data — but the caller knows it from the frame geometry, which is what makes
+     * this usable at all.
+     */
+    @Throws(Exception::class)
+    fun decompressWhole(compressed: ByteArray, dest: ByteArray, destSize: Int): Int {
+        val n = com.github.luben.zstd.Zstd.decompressByteArray(
+            dest, 0, destSize, compressed, 0, compressed.size
+        )
+        if (com.github.luben.zstd.Zstd.isError(n)) {
+            throw IllegalStateException("zstd: " + com.github.luben.zstd.Zstd.getErrorName(n))
+        }
+        return n.toInt()
+    }
 }
