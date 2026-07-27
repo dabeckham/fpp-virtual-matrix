@@ -115,7 +115,6 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
       <label for="emitterShape">Shape</label>
       <select id="emitterShape"><option value="ROUND">Round — bullet / DIP</option><option value="SQUARE">Square — SMD</option></select>
     </div>
-    <div class="row"><label>Louvre (%)</label><input type="range" id="louvrePercent" min="0" max="40" step="1"><input class="num" type="number" id="louvrePercent_n" step="1"></div>
     <div class="row"><label>Bloom (%)</label><input type="range" id="bloomPercent" min="0" max="100" step="1"><input class="num" type="number" id="bloomPercent_n" step="1"></div>
     <div class="row">
       <label for="substrateColor">Substrate</label>
@@ -240,7 +239,7 @@ pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:p
 
 <script>
 // Slider and number box are two views of one value; keep them in step without echoing.
-const NUM = ["pitchMm","emitterMm","louvrePercent","bloomPercent","brightness","gamma","panelDpi"];
+const NUM = ["pitchMm","emitterMm","bloomPercent","brightness","gamma","panelDpi"];
 const PLAIN = ["width","height","startChannel","remoteOffsetMs"];
 const TEXT = ["hostname"];
 const SEL = ["emitterShape","substrateColor","downsample","panelMode","colorOrder",
@@ -375,7 +374,7 @@ $("reload").addEventListener("click", load);
 const currentProfile = () => profiles.find(p => p.id === cfg.profileId);
 const profileBody = (id, label) => ({
   id: id, label: label, pitchMm: cfg.pitchMm, emitterMm: cfg.emitterMm, shape: cfg.emitterShape,
-  substrate: cfg.substrateColor, louvrePercent: cfg.louvrePercent, bloomPercent: cfg.bloomPercent,
+  substrate: cfg.substrateColor, bloomPercent: cfg.bloomPercent,
   packageName: (currentProfile() || {}).packageName || "", builtIn: false
 });
 

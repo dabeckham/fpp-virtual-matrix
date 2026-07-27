@@ -48,14 +48,6 @@ class LedProfileTest {
     }
 
     @Test
-    fun `only outdoor cabinets carry a louvre`() {
-        assertTrue(p("p10").louvrePercent > 0)
-        assertTrue(p("p8").louvrePercent > 0)
-        assertEquals("indoor panels have no shade", 0, p("p2_5").louvrePercent)
-        assertEquals("a strand of bullets has nothing to shade", 0, p("bullet_25").louvrePercent)
-    }
-
-    @Test
     fun `bullets are round and SMD cabinets are square, except DIP`() {
         assertEquals(EmitterShape.SQUARE, p("p10").shape)
         assertEquals(EmitterShape.ROUND, p("p10_dip").shape)
@@ -104,7 +96,7 @@ class LedProfileTest {
         // because there was nothing to compare against.
         val mine = LedProfile(
             "user_my_roofline", "My roofline", 25.4f, 12.0f, EmitterShape.ROUND,
-            substrate = LedProfile.SUBSTRATE_NONE, louvrePercent = 0, bloomPercent = 65,
+            substrate = LedProfile.SUBSTRATE_NONE, bloomPercent = 65,
             builtIn = false
         )
         LedProfiles.userProfiles = { listOf(mine) }

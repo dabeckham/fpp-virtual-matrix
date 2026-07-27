@@ -85,8 +85,6 @@ data class MatrixConfig(
     val emitterShape: EmitterShape = EmitterShape.ROUND,
     /** Colour of the unlit surface between emitters. */
     val substrateColor: Int = LedProfile.SUBSTRATE_NONE,
-    /** Shade above each row, percent of the cell. What makes an outdoor cabinet recognisable. */
-    val louvrePercent: Int = 0,
     /** 0 = trust the display's reported dpi (after a sanity check). */
     val panelDpi: Float = 0f,
     /** 0 = hard-edged apertures; higher spreads the bloom towards the cell corner. */
@@ -141,7 +139,7 @@ data class MatrixConfig(
         get() {
             val p = LedProfiles.byId(profileId) ?: return true
             return p.pitchMm != pitchMm || p.emitterMm != emitterMm || p.shape != emitterShape ||
-                p.substrate != substrateColor || p.louvrePercent != louvrePercent ||
+                p.substrate != substrateColor ||
                 p.bloomPercent != bloomPercent
         }
 
@@ -159,7 +157,6 @@ data class MatrixConfig(
         emitterMm = p.emitterMm,
         emitterShape = p.shape,
         substrateColor = p.substrate,
-        louvrePercent = p.louvrePercent,
         bloomPercent = p.bloomPercent
     ).validated()
 
@@ -205,7 +202,6 @@ data class MatrixConfig(
         emitterMm = emitterMm.coerceIn(0.2f, pitchMm.coerceIn(0.5f, 200f)),
         panelDpi = if (panelDpi <= 0f) 0f else panelDpi.coerceIn(10f, 1200f),
         bloomPercent = bloomPercent.coerceIn(0, 100),
-        louvrePercent = louvrePercent.coerceIn(0, 60),
         webPort = webPort.coerceIn(1024, 65535)
     )
 
@@ -236,7 +232,6 @@ data class MatrixConfig(
         put("profileId", profileId)
         put("profileEdited", profileEdited)   // derived; ignored on the way back in
         put("substrateColor", substrateColor)
-        put("louvrePercent", louvrePercent)
         put("webServerEnabled", webServerEnabled)
         put("webPort", webPort)
         put("preferRemovableStorage", preferRemovableStorage)
@@ -301,7 +296,6 @@ data class MatrixConfig(
             panelMode = enumOr(o.optString("panelMode"), base.panelMode),
             profileId = o.optString("profileId", base.profileId),
             substrateColor = o.optInt("substrateColor", base.substrateColor),
-            louvrePercent = o.optInt("louvrePercent", base.louvrePercent),
             pitchMm = o.optDouble("pitchMm", base.pitchMm.toDouble()).toFloat(),
             emitterMm = o.optDouble("emitterMm", base.emitterMm.toDouble()).toFloat(),
             emitterShape = enumOr(o.optString("emitterShape"), base.emitterShape),

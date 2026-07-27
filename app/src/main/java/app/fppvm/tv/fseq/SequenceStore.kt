@@ -46,6 +46,12 @@ class SequenceStore(
             if (leaf.any { it.code < 0x20 || it == '/' }) return null
             return leaf
         }
+
+        /**
+         * Containers this device will try to play. Kept to what the hardware decoder handles —
+         * the point of show media is that the SoC decodes it, not the CPU.
+         */
+        val VIDEO_EXTENSIONS = listOf("mp4", "mkv", "m4v", "mov", "webm")
     }
 
     init {
@@ -73,6 +79,28 @@ class SequenceStore(
         val all = searchDirs
         return if (all.isEmpty()) listOf(dir) else all
     }
+
+    /**
+     * The video that goes with a sequence, matched by filename the way FPP pairs audio.
+     *
+     * `show.fseq` plus `show.mp4` means play both; the file being there *is* the instruction, so
+     * there is no mode to set and nothing to keep in step with the media on disk.
+     */
+    fun pairedVideo(sequenceName: String): File? {
+        val name = sanitize(sequenceName) ?: return null
+        val stem = name.substringBeforeLast('.', name)
+        for (d in dirsToSearch()) {
+            for (ext in VIDEO_EXTENSIONS) {
+                val f = File(d, "$stem.$ext")
+                if (f.isFile && f.length() > 0) return f
+            }
+        }
+        return null
+    }
+
+    /** True when this name is a video rather than a sequence. */
+    fun isVideo(filename: String): Boolean =
+        VIDEO_EXTENSIONS.any { filename.endsWith(".$it", ignoreCase = true) }
 
     /** Points writes at [next] and searches [all]. Safe to call while playing. */
     fun useDirectories(next: File, all: List<File>) {

@@ -105,9 +105,6 @@ class SettingsActivity : ComponentActivity() {
         Setting("Substrate", "unlit surface colour", { substrateName(it.substrateColor) }) { c, d ->
             c.copy(substrateColor = cycle(SUBSTRATES, c.substrateColor, d)).edited()
         },
-        Setting("Louvre", "outdoor shade, % of cell", { "${it.louvrePercent}" }) { c, d ->
-            c.copy(louvrePercent = c.louvrePercent + d * 2).edited()
-        },
         Setting("Bloom", "% toward the cell corner", { "${it.bloomPercent}" }) { c, d ->
             c.copy(bloomPercent = c.bloomPercent + d * 5).edited()
         },

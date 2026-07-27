@@ -40,7 +40,7 @@ object PanelMask {
 
     /** Cache key for a built mask; rebuild only when one of these changes. */
     fun keyFor(g: PanelGeometry, bloomPercent: Int): String =
-        "%d:%d:%.3f:%.3f:%s:%d:%d".format(g.cols, g.rows, g.cellPx, g.emitterPx, g.shape, bloomPercent, g.louvrePercent)
+        "%d:%d:%.3f:%.3f:%s:%d".format(g.cols, g.rows, g.cellPx, g.emitterPx, g.shape, bloomPercent)
 
     /**
      * Computes the alpha map. Separated from bitmap creation so the maths is testable on the JVM.
@@ -83,10 +83,6 @@ object PanelMask {
             ay[y] = Math.abs(within - half)
         }
 
-        // Outdoor cabinets carry a shade over each row to keep sun off the emitters. The shadow it
-        // throws across the top of every cell is the single most recognisable feature of an outdoor
-        // panel, and it costs nothing here because the mask is cached.
-        val louvreRows = (cell * (g.louvrePercent.coerceIn(0, 60) / 100f))
         val alpha = ByteArray(w * h)
         val span = rBloom - rEmit
         val rEmit2 = rEmit * rEmit
@@ -97,15 +93,6 @@ object PanelMask {
             val dy = ay[y]
             val dy2 = dy * dy
             val bayerRow = (y and 7) shl 3
-            // Distance from the top of this cell, for the louvre shadow.
-            val intoCell = y - Math.floor(y / cell.toDouble()).toFloat() * cell
-            val shade = if (louvreRows > 0f && intoCell < louvreRows) {
-                // Darkest right under the shade, easing out as it falls away.
-                val t = 1f - (intoCell / louvreRows)
-                (t * t * 210f).toInt().coerceIn(0, 235)
-            } else {
-                0
-            }
             for (x in 0 until w) {
                 val dx = ax[x]
                 var a: Int
@@ -130,7 +117,6 @@ object PanelMask {
                 // Ordered dither. The panel composites at 16 bits, so a smooth ramp across tens of
                 // pixels lands on only ~32 distinguishable steps of R/B and shows as concentric
                 // contour rings. Breaking it up costs nothing per frame because this is cached.
-                if (shade > 0 && a < 255) a = maxOf(a, shade)
                 if (a in 1..254) a = (a + BAYER8[bayerRow or (x and 7)]).coerceIn(0, 255)
                 alpha[i++] = a.toByte()
             }

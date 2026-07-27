@@ -26,7 +26,7 @@ class PanelSolverTest {
         dpi: Float = DPI
     ) = PanelSolver.solve(
         mode = mode, pitchMm = pitch, emitterMm = emitter, shape = shape,
-        substrate = LedProfile.SUBSTRATE_BLACK_MASK, louvrePercent = 0,
+        substrate = LedProfile.SUBSTRATE_BLACK_MASK,
         surfaceWidth = W, surfaceHeight = H, sourceCols = srcCols, sourceRows = srcRows,
         reportedDpi = dpi
     )
@@ -152,7 +152,7 @@ class PanelSolverTest {
     fun `a manual dpi override wins over a plausible reported one`() {
         val g = PanelSolver.solve(
             mode = PanelMode.FIT_PHYSICAL, pitchMm = 25.4f, emitterMm = 12f,
-            shape = EmitterShape.ROUND, substrate = LedProfile.SUBSTRATE_NONE, louvrePercent = 0,
+            shape = EmitterShape.ROUND, substrate = LedProfile.SUBSTRATE_NONE,
             surfaceWidth = W, surfaceHeight = H,
             sourceCols = 64, sourceRows = 32, reportedDpi = 46f, dpiOverride = 92f
         )

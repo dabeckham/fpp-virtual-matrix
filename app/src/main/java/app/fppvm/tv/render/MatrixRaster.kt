@@ -211,7 +211,15 @@ class MatrixRaster(config: MatrixConfig) {
         cols: Int,
         rows: Int,
         mode: Downsample,
-        offset: Int = 0
+        offset: Int = 0,
+        /**
+         * Carry each cell's brightness in its alpha channel instead of a flat opaque byte.
+         *
+         * This is what stops a panel laid over video reading as a screen door: an emitter that
+         * is receiving no colour data becomes fully transparent, so the video runs through the
+         * dark parts of the matrix untouched, and only the lit emitters are drawn.
+         */
+        alphaFromBrightness: Boolean = false
     ): IntArray {
         val n = cols * rows
         if (gridPixels.size != n) gridPixels = IntArray(n)
@@ -260,7 +268,7 @@ class MatrixRaster(config: MatrixConfig) {
                     }
                 }
                 if (count == 0) {
-                    out[di] = 0xFF000000.toInt()
+                    out[di] = if (alphaFromBrightness) 0 else 0xFF000000.toInt()
                 } else {
                     val fr: Int
                     val fg: Int
@@ -270,8 +278,18 @@ class MatrixRaster(config: MatrixConfig) {
                     } else {
                         fr = r / count; fg = g / count; fb = b / count
                     }
-                    out[di] = (0xFF shl 24) or
-                        (table[fr] shl 16) or (table[fg] shl 8) or table[fb]
+                    val or_ = table[fr]
+                    val og = table[fg]
+                    val ob = table[fb]
+                    val alpha = if (alphaFromBrightness) {
+                        // Rises fast: a real LED at half power still reads as a lit LED rather
+                        // than a half-transparent one. Only true black disappears entirely.
+                        val lum = (or_ * 2 + og * 5 + ob) / 8
+                        if (lum <= 0) 0 else (lum * ALPHA_RAMP).coerceAtMost(255)
+                    } else {
+                        0xFF
+                    }
+                    out[di] = (alpha shl 24) or (or_ shl 16) or (og shl 8) or ob
                 }
                 di++
             }
@@ -285,6 +303,15 @@ class MatrixRaster(config: MatrixConfig) {
     }
 
     companion object {
+        /**
+         * How fast a cell becomes opaque as it lights up, when alpha carries brightness.
+         *
+         * 4 means anything above a quarter brightness is fully opaque. Deliberately steep: an LED
+         * is either emitting or it is not, and a gentle ramp would make every dim part of a show
+         * look like a translucent haze over the video rather than like dim LEDs.
+         */
+        const val ALPHA_RAMP = 4
+
         /** True when the tone controls would leave every value untouched. */
         fun isIdentityTone(c: MatrixConfig): Boolean = c.brightness >= 100 && c.gamma == 1.0f
 

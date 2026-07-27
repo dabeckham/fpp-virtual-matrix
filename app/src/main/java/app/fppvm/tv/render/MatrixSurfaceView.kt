@@ -50,6 +50,36 @@ class MatrixSurfaceView @JvmOverloads constructor(
         color = Color.BLACK
         isAntiAlias = false
     }
+
+    /**
+     * Erases rather than paints. Over video the substrate cannot be a colour — anything drawn
+     * between the emitters would hide the picture — so the same aperture mask is used to clear
+     * those pixels to fully transparent instead.
+     */
+    private val maskClearPaint = Paint().apply {
+        isAntiAlias = false
+        xfermode = android.graphics.PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+    }
+
+    /**
+     * Video is playing behind this surface, so everything that is not a lit emitter must be
+     * transparent. Costs the packed 16-bit path, which has no alpha channel to be transparent
+     * with — that trade is the whole point of the mode.
+     */
+    @Volatile
+    var videoUnderlay: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            try {
+                setZOrderMediaOverlay(value)
+                holder.setFormat(
+                    if (value) android.graphics.PixelFormat.TRANSLUCENT
+                    else android.graphics.PixelFormat.RGBA_8888
+                )
+            } catch (_: Throwable) {
+            }
+        }
     private val textPaint = Paint().apply {
         color = Color.WHITE
         isAntiAlias = true
@@ -144,6 +174,8 @@ class MatrixSurfaceView @JvmOverloads constructor(
      * Only worth doing for the 565 path; the compositor is free to ignore it.
      */
     fun requestLowColorSurface(enable: Boolean) {
+        // Never in video mode: 565 has no alpha channel, so the gaps could not be see-through.
+        if (videoUnderlay) return
         try {
             holder.setFormat(
                 if (enable) android.graphics.PixelFormat.RGB_565 else android.graphics.PixelFormat.RGBA_8888
@@ -191,7 +223,9 @@ class MatrixSurfaceView @JvmOverloads constructor(
                 null
             } ?: return false
             try {
-                canvas.drawColor(Color.BLACK, PorterDuff.Mode.SRC)
+                // SRC, not a blend: whatever was in the buffer last frame has to go, and over
+                // video "gone" means transparent rather than black.
+                canvas.drawColor(if (videoUnderlay) Color.TRANSPARENT else Color.BLACK, PorterDuff.Mode.SRC)
                 drawStatus(canvas)
             } finally {
                 try {
@@ -308,7 +342,7 @@ class MatrixSurfaceView @JvmOverloads constructor(
             val cells = cols * rows
             // The grid bitmap is tiny either way; the win from 565 is in the full-screen scaled
             // blit that follows, which is the dominant per-frame cost on this SoC.
-            if (packed565 != null && packed565.size >= cells) {
+            if (packed565 != null && packed565.size >= cells && !videoUnderlay) {
                 ensureBitmap(cols, rows, Bitmap.Config.RGB_565)
                 (bitmap ?: return false).copyPixelsFromBuffer(shortBuffer(packed565, cells))
             } else {
@@ -324,9 +358,11 @@ class MatrixSurfaceView @JvmOverloads constructor(
                 null
             } ?: return false
             try {
-                // Off-panel area stays black; the module face gets the substrate colour, because
-                // 65-80% of what you are looking at is the unlit surface.
-                canvas.drawColor(Color.BLACK, PorterDuff.Mode.SRC)
+                // Normally the off-panel area stays black and the module face gets the substrate
+                // colour, because 65-80% of what you are looking at is the unlit surface. Over
+                // video there is no unlit surface to colour — every pixel that is not a lit
+                // emitter has to let the picture through.
+                canvas.drawColor(if (videoUnderlay) Color.TRANSPARENT else Color.BLACK, PorterDuff.Mode.SRC)
                 val left = (canvas.width - geometry.widthPx) / 2
                 val top = (canvas.height - geometry.heightPx) / 2
                 dstRect.set(left, top, left + geometry.widthPx, top + geometry.heightPx)
@@ -337,8 +373,14 @@ class MatrixSurfaceView @JvmOverloads constructor(
                 if (!geometry.degraded) {
                     val mask = panelMaskFor(geometry, bloomPercent)
                     if (mask != null) {
-                        maskPaint.color = geometry.substrate
-                        canvas.drawBitmap(mask, dstRect.left.toFloat(), dstRect.top.toFloat(), maskPaint)
+                        if (videoUnderlay) {
+                            // Clear everything outside an aperture, leaving only the emitter
+                            // shapes; their own alpha then decides which of them are actually lit.
+                            canvas.drawBitmap(mask, dstRect.left.toFloat(), dstRect.top.toFloat(), maskClearPaint)
+                        } else {
+                            maskPaint.color = geometry.substrate
+                            canvas.drawBitmap(mask, dstRect.left.toFloat(), dstRect.top.toFloat(), maskPaint)
+                        }
                     }
                 }
                 drawStatus(canvas)

@@ -44,7 +44,9 @@ class WebConfigServer(
     private val onPlayLocal: (String, Boolean) -> Boolean = { _, _ -> false },
     private val onStopLocal: () -> Unit = {},
     /** FPP's channel-output config; how a discovering tool learns what kind of output this is. */
-    private val channelOutputsJson: () -> JSONObject = { JSONObject() }
+    private val channelOutputsJson: () -> JSONObject = { JSONObject() },
+    /** Forces the video layer to a named file, or stops it when the name is blank. */
+    private val onPlayVideo: (String?) -> Boolean = { false }
 ) : NanoHTTPD(port) {
 
     companion object {
@@ -162,6 +164,17 @@ class WebConfigServer(
             return json(
                 if (ok) Response.Status.OK else Response.Status.NOT_FOUND,
                 JSONObject().put("status", if (ok) "OK" else "no such sequence").put("name", name)
+            )
+        }
+        // Normally the video layer follows the sequence by filename and needs no endpoint.
+        // This one exists to drive it directly while the layered rendering is being measured.
+        if (uri == "/api/video" && method == Method.POST) {
+            val o = JSONObject(readBody(session))
+            val name = o.optString("name", "")
+            val ok = onPlayVideo(name.ifBlank { null })
+            return json(
+                if (ok) Response.Status.OK else Response.Status.NOT_FOUND,
+                JSONObject().put("status", if (ok) "OK" else "no such file").put("name", name)
             )
         }
         if (uri == "/api/stop" && method == Method.POST) {

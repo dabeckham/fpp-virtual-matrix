@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var configStore: ConfigStore
     private lateinit var matrixView: MatrixSurfaceView
+    private lateinit var videoView: app.fppvm.tv.render.VideoLayerView
     private lateinit var store: SequenceStore
     private lateinit var player: MatrixPlayer
     private var client: MultiSyncClient? = null
@@ -53,8 +54,19 @@ class MainActivity : ComponentActivity() {
         config = applyIntentOverride(intent) ?: configStore.load()
 
         matrixView = MatrixSurfaceView(this)
+        videoView = app.fppvm.tv.render.VideoLayerView(this).apply { visibility = View.GONE }
         setContentView(
             FrameLayout(this).apply {
+                // Video first, so it sits underneath. The matrix surface goes translucent while a
+                // video is playing, which is what lets the picture through the gaps between the
+                // emitters instead of a grid of dark dots covering it.
+                addView(
+                    videoView,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                )
                 addView(
                     matrixView,
                     FrameLayout.LayoutParams(
@@ -67,6 +79,7 @@ class MainActivity : ComponentActivity() {
 
         store = SequenceStore(File(filesDir, SequenceStorage.SEQ_SUBDIR))
         player = MatrixPlayer(store, matrixView, config)
+        player.onVideoPair = { f -> runOnUiThread { setVideo(f) } }
         APP_PLAYER = player
 
         if (config.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -163,6 +176,7 @@ class MainActivity : ComponentActivity() {
         // Ask for the screen back before tearing anything down, so a launcher grabbing focus
         // mid-show does not end the show.
         focusGuard?.onFocusLost()
+        videoView.stop()
         client?.stop()
         client = null
         ddp?.stop()
@@ -200,6 +214,11 @@ class MainActivity : ComponentActivity() {
                 storageJson = { storageJson() },
                 onPlayLocal = { name, loop -> player.playLocal(name, loop) },
                 onStopLocal = { player.stopLocal() },
+                onPlayVideo = { name ->
+                    val f = if (name.isNullOrBlank()) null else store.localFile(name)
+                    runOnUiThread { setVideo(f) }
+                    name.isNullOrBlank() || f != null
+                },
                 channelOutputsJson = { channelOutputsJson() }
             )
             s.password = config.webPassword
@@ -209,6 +228,37 @@ class MainActivity : ComponentActivity() {
         } catch (t: Throwable) {
             android.util.Log.w("FppVm", "web server failed to start", t)
         }
+    }
+
+    /**
+     * Starts or stops the video layer, and puts the matrix into the matching mode.
+     *
+     * The two have to move together: a translucent matrix over no video would show the launcher
+     * through the gaps, and an opaque matrix over a video would hide it completely.
+     */
+    private fun setVideo(file: java.io.File?) {
+        if (file == null) {
+            videoView.stop()
+            videoView.visibility = View.GONE
+            matrixView.videoUnderlay = false
+            player.videoUnderlay = false
+            matrixView.requestLowColorSurface(config.useLowColor || config.panelEnabled)
+            return
+        }
+        videoView.visibility = View.VISIBLE
+        matrixView.videoUnderlay = true
+        player.videoUnderlay = true
+        videoView.play(file)
+        android.util.Log.i("FppVm", "video layer: ${file.name}")
+    }
+
+    /** The video file currently behind the panel, for the status page. */
+    private fun videoJson(): JSONObject = JSONObject().apply {
+        put("playing", videoView.isPlaying())
+        put("positionMs", videoView.positionMs())
+        put("durationMs", videoView.durationMs())
+        put("underlay", matrixView.videoUnderlay)
+        put("error", videoView.lastError)
     }
 
     private fun statusJson(): JSONObject {
@@ -231,6 +281,7 @@ class MainActivity : ComponentActivity() {
             put("ddpPackets", st.ddp.packets)
             put("ddpPushes", st.ddp.pushes)
             put("ddpSender", st.ddp.lastSender)
+            put("video", videoJson())
             // Header fields, mirroring what FPP's own status API exposes.
             put("host_name", config.hostname.ifBlank { defaultHostname() })
             put("host_description", HOST_DESCRIPTION)

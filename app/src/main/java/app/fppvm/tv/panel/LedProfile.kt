@@ -26,12 +26,6 @@ data class LedProfile(
     val packageName: String = "",
     /** Colour of the unlit surface. 65-80% of the panel is this, so it matters. */
     val substrate: Int = SUBSTRATE_BLACK_MASK,
-    /**
-     * Depth of the shade above each row, as a percentage of the cell. Outdoor cabinets have a
-     * louvre to keep sun off the emitters, and the shadow it casts is the single most recognisable
-     * feature of an outdoor panel. 0 for indoor and for anything that is not a panel.
-     */
-    val louvrePercent: Int = 0,
     /** Default bloom for this product; still adjustable afterwards. */
     val bloomPercent: Int = 45,
     val builtIn: Boolean = true,
@@ -48,7 +42,6 @@ data class LedProfile(
         put("shape", shape.name)
         put("packageName", packageName)
         put("substrate", substrate)
-        put("louvrePercent", louvrePercent)
         put("bloomPercent", bloomPercent)
         put("builtIn", builtIn)
         put("notes", notes)
@@ -80,7 +73,6 @@ data class LedProfile(
                 },
                 packageName = o.optString("packageName", ""),
                 substrate = o.optInt("substrate", SUBSTRATE_BLACK_MASK),
-                louvrePercent = o.optInt("louvrePercent", 0),
                 bloomPercent = o.optInt("bloomPercent", 45),
                 builtIn = o.optBoolean("builtIn", false),
                 notes = o.optString("notes", "")
@@ -101,7 +93,7 @@ data class LedProfile(
 object LedProfiles {
 
     val BUILT_IN: List<LedProfile> = listOf(
-        // --- Indoor / fine pitch. Black mask, no louvre.
+        // --- Indoor / fine pitch. Black mask.
         LedProfile(
             "p2_5", "P2.5 indoor", 2.5f, 1.5f, EmitterShape.SQUARE, "SMD1515",
             substrate = LedProfile.SUBSTRATE_BLACK_MASK, bloomPercent = 30,
@@ -120,23 +112,23 @@ object LedProfiles {
             substrate = LedProfile.SUBSTRATE_BLACK_MASK, bloomPercent = 40
         ),
 
-        // --- Outdoor cabinets. Louvred, and the shade is what makes them recognisable.
+        // --- Outdoor cabinets. Wider spacing, so the dots read as separate.
         LedProfile(
             "p6", "P6 outdoor", 6.0f, 3.5f, EmitterShape.SQUARE, "SMD3535",
-            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, louvrePercent = 12, bloomPercent = 45
+            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, bloomPercent = 45
         ),
         LedProfile(
             "p8", "P8 outdoor", 8.0f, 3.5f, EmitterShape.SQUARE, "SMD3535",
-            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, louvrePercent = 14, bloomPercent = 45
+            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, bloomPercent = 45
         ),
         LedProfile(
             "p10", "P10 outdoor SMD", 10.0f, 3.5f, EmitterShape.SQUARE, "SMD3535",
-            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, louvrePercent = 16, bloomPercent = 50,
+            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, bloomPercent = 50,
             notes = "Fill 0.35 — clearly separate dots. The classic outdoor module."
         ),
         LedProfile(
             "p10_dip", "P10 outdoor DIP (round)", 10.0f, 3.8f, EmitterShape.ROUND, "DIP346",
-            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, louvrePercent = 16, bloomPercent = 55,
+            substrate = LedProfile.SUBSTRATE_BLACK_PANEL, bloomPercent = 55,
             notes = "Older through-hole outdoor module — round lenses rather than square packages."
         ),
 

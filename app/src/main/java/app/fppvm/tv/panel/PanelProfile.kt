@@ -63,8 +63,6 @@ data class PanelGeometry(
     val shape: EmitterShape,
     /** Colour of the unlit surface; most of the panel is this. */
     val substrate: Int,
-    /** Shade depth above each row, percent of the cell. 0 for indoor and for strands. */
-    val louvrePercent: Int,
     val dpi: Float,
     val achievedPitchMm: Float,
     val achievedEmitterMm: Float,
@@ -134,7 +132,6 @@ object PanelSolver {
         emitterMm: Float,
         shape: EmitterShape,
         substrate: Int,
-        louvrePercent: Int,
         surfaceWidth: Int,
         surfaceHeight: Int,
         sourceCols: Int,
@@ -195,7 +192,6 @@ object PanelSolver {
             emitterPx = emitterPx,
             shape = shape,
             substrate = substrate,
-            louvrePercent = louvrePercent.coerceIn(0, 60),
             dpi = dpi,
             achievedPitchMm = cellPx / pxPerMm,
             achievedEmitterMm = emitterPx / pxPerMm,

@@ -125,7 +125,6 @@ class MatrixPlayer(
             emitterMm = c.emitterMm,
             shape = c.emitterShape,
             substrate = c.substrateColor,
-            louvrePercent = c.louvrePercent,
             surfaceWidth = sw,
             surfaceHeight = sh,
             sourceCols = c.width,
@@ -178,6 +177,21 @@ class MatrixPlayer(
 
     @Volatile
     var onStatus: ((Status) -> Unit)? = null
+
+    /**
+     * Video is playing behind the panel, so cells carry their brightness as alpha and the packed
+     * 16-bit path is off — it has no alpha channel to be transparent with.
+     */
+    @Volatile
+    var videoUnderlay: Boolean = false
+
+    /**
+     * The sequence changed, and this is the video that goes with it, or null for none.
+     *
+     * Resolved by filename, so putting `show.mp4` beside `show.fseq` is the whole configuration.
+     */
+    @Volatile
+    var onVideoPair: ((java.io.File?) -> Unit)? = null
 
     @Volatile
     private var seenSystems = LinkedHashMap<String, PingPacket>()
@@ -240,6 +254,7 @@ class MatrixPlayer(
             reader = null
             window = null
         }
+        onVideoPair?.invoke(null)
         publish(status.copy(state = State.IDLE, sequence = "", frame = -1, message = "stopped by $masterIp"))
     }
 
@@ -389,6 +404,7 @@ class MatrixPlayer(
             reader = null
             window = null
         }
+        onVideoPair?.invoke(null)
         publish(status.copy(state = State.IDLE, sequence = "", frame = -1, source = Source.MASTER, message = ""))
     }
 
@@ -447,6 +463,7 @@ class MatrixPlayer(
                 window = newWindow
             }
             clock.configure(newReader.header.stepTimeMs, newReader.header.numFrames)
+            onVideoPair?.invoke(store.pairedVideo(file.name))
             decodeMsAvg = 0.0
             paintMsAvg = 0.0
             if (startImmediately) {
@@ -569,12 +586,12 @@ class MatrixPlayer(
                         val tPaint0 = System.nanoTime()
                         val geo = panelGeometry
                         val painted = if (geo != null) {
-                            val px = if (ok) {
-                                raster.renderGrid(frameBuffer, geo.cols, geo.rows, cfg.downsample)
-                            } else {
-                                raster.renderGrid(ByteArray(0), geo.cols, geo.rows, cfg.downsample)
-                            }
-                            val packed = raster.packGridTo565(geo.cols * geo.rows)
+                            val alpha = videoUnderlay
+                            val px = raster.renderGrid(
+                                if (ok) frameBuffer else ByteArray(0),
+                                geo.cols, geo.rows, cfg.downsample, 0, alpha
+                            )
+                            val packed = if (alpha) null else raster.packGridTo565(geo.cols * geo.rows)
                             view.presentPanel(px, packed, geo, cfg.bloomPercent)
                         } else if (cfg.useLowColor) {
                             val px = if (ok) raster.render565(frameBuffer) else raster.blank565()
@@ -682,8 +699,10 @@ class MatrixPlayer(
     private fun paintChannels(cfg: MatrixConfig, data: ByteArray): Boolean {
         val geo = panelGeometry
         return if (geo != null) {
-            val px = raster.renderGrid(data, geo.cols, geo.rows, cfg.downsample)
-            view.presentPanel(px, raster.packGridTo565(geo.cols * geo.rows), geo, cfg.bloomPercent)
+            val alpha = videoUnderlay
+            val px = raster.renderGrid(data, geo.cols, geo.rows, cfg.downsample, 0, alpha)
+            val packed = if (alpha) null else raster.packGridTo565(geo.cols * geo.rows)
+            view.presentPanel(px, packed, geo, cfg.bloomPercent)
         } else if (cfg.useLowColor) {
             view.present565(raster.render565(data), raster.width, raster.height)
         } else {
