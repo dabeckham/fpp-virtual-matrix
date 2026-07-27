@@ -84,11 +84,13 @@ class LedProfileTest {
         assertEquals(10.0f, loaded.pitchMm, 0.001f)
         assertEquals(3.5f, loaded.emitterMm, 0.001f)
         assertEquals(EmitterShape.SQUARE, loaded.emitterShape)
-        assertTrue(!loaded.profileEdited)
+        assertTrue("a freshly loaded profile is not modified", !loaded.profileEdited)
         assertEquals("P10 outdoor SMD", loaded.profileLabel)
 
         // Every field stays independently editable afterwards — that is the whole point.
-        val tweaked = loaded.copy(emitterShape = EmitterShape.ROUND).edited()
+        // No edited() call: divergence is computed from the values, so any route that changes a
+        // field — D-pad, adb or the web API — marks it the same way.
+        val tweaked = loaded.copy(emitterShape = EmitterShape.ROUND)
         assertEquals(EmitterShape.ROUND, tweaked.emitterShape)
         assertEquals(10.0f, tweaked.pitchMm, 0.001f)
         assertTrue(tweaked.profileEdited)

@@ -62,6 +62,10 @@ class MainActivity : ComponentActivity() {
 
         if (config.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         publishSurfaceMetrics()
+        // Tied to the process, not the foreground. A TV that has dropped to its launcher is
+        // exactly when you need to reach it, and stopping the server in onStop meant losing the
+        // remote surface at the only moment it mattered.
+        startWebServer()
         goImmersive()
     }
 
@@ -99,7 +103,6 @@ class MainActivity : ComponentActivity() {
         publishSurfaceMetrics()
         player.start()
         startMultiSync()
-        startWebServer()
         updateOverlay()
     }
 
@@ -107,19 +110,15 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         client?.stop()
         client = null
-        try {
-            web?.stop()
-        } catch (_: Throwable) {
-        }
-        web = null
         player.stop()
     }
 
     /**
      * Brings up the config page and the FPP-compatible file API.
      *
-     * Runs only while the activity is foreground, which is the whole life of this app anyway, and
-     * means a backgrounded display is not quietly serving a config surface.
+     * Started here rather than in [onStart] so it lives as long as the process. A TV that has
+     * dropped to its launcher is precisely when you need to reach it, and tying the server to the
+     * foreground meant losing the remote surface at the only moment it mattered.
      */
     private fun startWebServer() {
         if (!config.webServerEnabled) return
@@ -190,6 +189,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            web?.stop()
+        } catch (_: Throwable) {
+        }
+        web = null
         if (APP_PLAYER === player) APP_PLAYER = null
     }
 

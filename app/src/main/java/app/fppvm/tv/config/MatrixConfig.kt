@@ -73,7 +73,6 @@ data class MatrixConfig(
      * records that it no longer matches what was loaded.
      */
     val profileId: String = "bullet_25",
-    val profileEdited: Boolean = false,
     val pitchMm: Float = 25.4f,
     val emitterMm: Float = 12.0f,
     val emitterShape: EmitterShape = EmitterShape.ROUND,
@@ -116,6 +115,21 @@ data class MatrixConfig(
 
     val panelEnabled: Boolean get() = panelMode != PanelMode.OFF
 
+    /**
+     * True when the appearance no longer matches the profile it was loaded from.
+     *
+     * Derived rather than stored: it used to be a flag every caller had to remember to set, and
+     * the D-pad set it while the web API and the intent extra did not, so the same edit showed as
+     * modified one way and unmodified another.
+     */
+    val profileEdited: Boolean
+        get() {
+            val p = LedProfiles.byId(profileId) ?: return true
+            return p.pitchMm != pitchMm || p.emitterMm != emitterMm || p.shape != emitterShape ||
+                p.substrate != substrateColor || p.louvrePercent != louvrePercent ||
+                p.bloomPercent != bloomPercent
+        }
+
     /** Label for the current look, marked when it has drifted from the profile it came from. */
     val profileLabel: String
         get() {
@@ -126,7 +140,6 @@ data class MatrixConfig(
     /** Loads a profile's appearance into the config without touching anything else. */
     fun applyProfile(p: LedProfile): MatrixConfig = copy(
         profileId = p.id,
-        profileEdited = false,
         pitchMm = p.pitchMm,
         emitterMm = p.emitterMm,
         emitterShape = p.shape,
@@ -135,8 +148,11 @@ data class MatrixConfig(
         bloomPercent = p.bloomPercent
     ).validated()
 
-    /** Marks the look as diverged from its profile. Any edit to an appearance field goes through this. */
-    fun edited(): MatrixConfig = if (profileEdited) this else copy(profileEdited = true)
+    /**
+     * Retained so edit sites read the same everywhere. Divergence is now computed from the values,
+     * so this no longer has to do anything.
+     */
+    fun edited(): MatrixConfig = this
 
     /** Resolved colour depth: AUTO becomes FAST above a quarter of a megapixel. */
     val useLowColor: Boolean
@@ -191,7 +207,7 @@ data class MatrixConfig(
         put("colorDepth", colorDepth.name)
         put("panelMode", panelMode.name)
         put("profileId", profileId)
-        put("profileEdited", profileEdited)
+        put("profileEdited", profileEdited)   // derived; ignored on the way back in
         put("substrateColor", substrateColor)
         put("louvrePercent", louvrePercent)
         put("webServerEnabled", webServerEnabled)
@@ -254,7 +270,6 @@ data class MatrixConfig(
             colorDepth = enumOr(o.optString("colorDepth"), base.colorDepth),
             panelMode = enumOr(o.optString("panelMode"), base.panelMode),
             profileId = o.optString("profileId", base.profileId),
-            profileEdited = o.optBoolean("profileEdited", base.profileEdited),
             substrateColor = o.optInt("substrateColor", base.substrateColor),
             louvrePercent = o.optInt("louvrePercent", base.louvrePercent),
             pitchMm = o.optDouble("pitchMm", base.pitchMm.toDouble()).toFloat(),
