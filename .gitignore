@@ -1,0 +1,20 @@
+# Build output
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+
+# Upstream FPP checkout, kept locally as a reference for the port (not vendored)
+fpp-upstream/
+
+# Local working notes (never shared)
+*.local.md
+local/
+scratch/
