@@ -138,7 +138,7 @@ class MainActivity : ComponentActivity() {
                 identityJson = { identityJson() }
             )
             s.password = config.webPassword
-            s.start(WebConfigServer.SOCKET_READ_TIMEOUT, true)
+            s.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
             web = s
             android.util.Log.i("FppVm", "web config on http://${client?.localIpv4() ?: "?"}:${config.webPort}")
         } catch (t: Throwable) {
