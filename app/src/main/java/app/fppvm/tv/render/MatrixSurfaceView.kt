@@ -66,7 +66,6 @@ class MatrixSurfaceView @JvmOverloads constructor(
 
     init {
         holder.addCallback(this)
-        setZOrderOnSurface(false)
     }
 
     fun setConfig(next: MatrixConfig) {

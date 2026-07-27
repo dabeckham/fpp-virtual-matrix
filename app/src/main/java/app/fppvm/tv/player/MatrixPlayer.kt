@@ -189,8 +189,10 @@ class MatrixPlayer(
 
     // ---------------------------------------------------------------- sequence loading
 
-    private fun filenameMatches(localName: String, wireName: String): Boolean =
-        localName.equals(SequenceStore.sanitize(wireName) ?: return false, ignoreCase = true)
+    private fun filenameMatches(localName: String, wireName: String): Boolean {
+        val wanted = SequenceStore.sanitize(wireName) ?: return false
+        return localName.equals(wanted, ignoreCase = true)
+    }
 
     private fun openSequence(
         filename: String,
