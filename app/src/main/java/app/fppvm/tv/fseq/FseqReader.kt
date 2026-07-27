@@ -33,6 +33,18 @@ class FseqReader private constructor(
         /** Guard against a corrupt block table asking us to slurp the entire file into RAM. */
         private const val MAX_COMPRESSED_BLOCK_BYTES = 64L * 1024 * 1024
 
+        /**
+         * Ceiling on decoded frames held per window.
+         *
+         * A whole block is normally the right unit to cache: FPP aims for 64 KB blocks, and with a
+         * floor of two frames per block a 1280x720 matrix (2.64 MiB a frame) still only means about
+         * 5 MiB. But block sizing is the writer's choice, and this device has a 192 MB heap growth
+         * limit — a file pairing a large window with many frames per block would otherwise OOM the
+         * display mid-show. Past this budget the cache becomes a sliding window anchored at the
+         * frame being asked for, which costs nothing on sequential playback.
+         */
+        private const val MAX_CACHE_BYTES = 24L * 1024 * 1024
+
         @Throws(Exception::class)
         fun open(file: File): FseqReader {
             val raf = RandomAccessFile(file, "r")
@@ -172,6 +184,10 @@ class FseqReader private constructor(
     inner class Window(val startChannel: Int, val channelCount: Int) {
         private val spans: List<Span> = computeSpans(header.ranges, startChannel, channelCount)
 
+        /** How many decoded frames fit the cache budget. At least one, so a frame always fits. */
+        private val maxCacheFrames: Int =
+            (MAX_CACHE_BYTES / channelCount.coerceAtLeast(1)).coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
+
         /** Window bytes for the frames of exactly one block. */
         private var cachedBlock = -1
         private var cachedFirstFrame = 0
@@ -196,19 +212,31 @@ class FseqReader private constructor(
             if (frame < 0 || frame >= header.numFrames || spans.isEmpty()) return false
 
             val blockIdx = blockForFrame(frame)
-            if (blockIdx != cachedBlock && !loadBlock(blockIdx)) return false
+            val cached = blockIdx == cachedBlock &&
+                frame >= cachedFirstFrame && frame < cachedFirstFrame + cachedFrameCount
+            if (!cached && !loadBlock(blockIdx, frame)) return false
             val idx = frame - cachedFirstFrame
             if (idx < 0 || idx >= cachedFrameCount) return false
             System.arraycopy(cache, idx * channelCount, dest, 0, channelCount)
             return true
         }
 
-        private fun loadBlock(blockIdx: Int): Boolean {
+        /**
+         * Decodes part of block [blockIdx] into the cache, anchored so that [wantFrame] is the
+         * first frame held. Normally that is the whole block; for a window big enough to blow the
+         * cache budget it is [maxCacheFrames] frames starting at the one being asked for.
+         */
+        private fun loadBlock(blockIdx: Int, wantFrame: Int): Boolean {
             cachedBlock = -1
             val block = header.blocks.getOrNull(blockIdx) ?: return false
             val frames = blockFrames(blockIdx)
-            val count = frames.last - frames.first + 1
+            val blockCount = frames.last - frames.first + 1
+            if (blockCount <= 0) return false
+
+            val anchor = wantFrame.coerceIn(frames.first, frames.last)
+            val count = minOf(maxCacheFrames, frames.last - anchor + 1)
             if (count <= 0) return false
+            val skip = anchor - frames.first
 
             val needed = count.toLong() * channelCount
             if (needed > Int.MAX_VALUE) return false
@@ -216,8 +244,8 @@ class FseqReader private constructor(
             java.util.Arrays.fill(cache, 0, needed.toInt(), 0)
 
             val decoded = when (header.compression) {
-                FseqHeader.Compression.NONE -> readUncompressed(block, frames.first, count)
-                else -> readCompressed(block, count)
+                FseqHeader.Compression.NONE -> readUncompressed(block, anchor, count)
+                else -> readCompressed(block, skip, count)
             }
             if (decoded <= 0) {
                 decodeErrors++
@@ -225,7 +253,7 @@ class FseqReader private constructor(
             }
             if (decoded < count) decodeErrors++
             cachedBlock = blockIdx
-            cachedFirstFrame = frames.first
+            cachedFirstFrame = anchor
             // Only advertise the frames that actually decoded; a truncated tail block then reads
             // as "no data" rather than silently serving another frame's pixels.
             cachedFrameCount = decoded
@@ -254,7 +282,8 @@ class FseqReader private constructor(
             return done
         }
 
-        private fun readCompressed(block: FseqHeader.Block, count: Int): Int {
+        /** Decodes [count] frames from [block], after discarding [skipFrames] leading frames. */
+        private fun readCompressed(block: FseqHeader.Block, skipFrames: Int, count: Int): Int {
             if (block.compressedLength <= 0 || block.compressedLength > MAX_COMPRESSED_BLOCK_BYTES) return 0
             val compressed = ByteArray(block.compressedLength.toInt())
             try {
@@ -275,6 +304,14 @@ class FseqReader private constructor(
             var done = 0
             stream.use { input ->
                 try {
+                    // Zstd/zlib are sequential, so reaching the anchor means decoding and throwing
+                    // away everything before it. Only happens when the cache budget forces a
+                    // sliding window; a normal block starts at its first frame.
+                    if (skipFrames > 0 &&
+                        !skipFully(input, skipFrames.toLong() * header.frameSize)
+                    ) {
+                        return@use
+                    }
                     outer@ for (f in 0 until count) {
                         var pos = 0
                         val destBase = f * channelCount

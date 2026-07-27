@@ -217,4 +217,53 @@ class FseqReaderTest {
             assertEquals(5000L, it.header.totalTimeMs)
         }
     }
+
+    @Test
+    fun `a window too large to cache a whole block still reads every frame`() {
+        // 700 000 channels a frame with 8 frames a block is ~5.6 MB decoded per block; the reader's
+        // budget forces a sliding window, and the sliding path is the one that only runs on the
+        // biggest matrices, so it needs its own coverage rather than being exercised by accident.
+        assumeZstd()
+        val channels = 700_000
+        val frames = (0 until 24).map { f ->
+            ByteArray(channels) { c -> ((f * 13 + c) and 0xFF).toByte() }
+        }
+        val f = FseqTestWriter.write(
+            tmp.newFile("huge.fseq"), frames,
+            compression = FseqHeader.Compression.ZSTD, framesPerBlock = 8
+        )
+        FseqReader.open(f).use { reader ->
+            val start = 1000
+            val count = 600_000
+            val w = reader.openWindow(start, count)
+            val buf = ByteArray(count)
+            // Sequential, which is how playback reads, then a couple of seeks.
+            for (i in 0 until 24) {
+                assertTrue("frame $i", w.readFrame(i, buf))
+                assertArrayEquals("frame $i", frames[i].copyOfRange(start, start + count), buf)
+            }
+            for (i in listOf(23, 4, 17, 0)) {
+                assertTrue("seek to $i", w.readFrame(i, buf))
+                assertArrayEquals("seek to $i", frames[i].copyOfRange(start, start + count), buf)
+            }
+        }
+    }
+
+    @Test
+    fun `panel-resolution geometry is representable`() {
+        // 1280x720 is 2 764 800 channels; the reader must handle a frame that size.
+        val channels = 1280 * 720 * 3
+        val frames = (0 until 4).map { f -> ByteArray(channels) { c -> ((f + c) and 0xFF).toByte() } }
+        val f = FseqTestWriter.write(
+            tmp.newFile("hd.fseq"), frames,
+            compression = FseqHeader.Compression.NONE
+        )
+        FseqReader.open(f).use { reader ->
+            assertEquals(channels, reader.header.frameSize)
+            val w = reader.openWindow(0, channels)
+            val buf = ByteArray(channels)
+            assertTrue(w.readFrame(2, buf))
+            assertArrayEquals(frames[2], buf)
+        }
+    }
 }

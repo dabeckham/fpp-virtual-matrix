@@ -58,6 +58,12 @@ class MatrixPlayer(
         val renderedFrames: Long = 0,
         val droppedFrames: Long = 0,
         val decodeErrors: Int = 0,
+        /** Frames actually painted in the last second. */
+        val fps: Float = 0f,
+        /** Moving average of FSEQ decode time per frame, milliseconds. */
+        val decodeMs: Float = 0f,
+        /** Moving average of raster + blit time per frame, milliseconds. */
+        val paintMs: Float = 0f,
         val message: String = "",
         val multiSync: MultiSyncStats = MultiSyncStats()
     )
@@ -315,10 +321,21 @@ class MatrixPlayer(
 
     // ---------------------------------------------------------------- playback
 
+    private var decodeMsAvg = 0.0
+    private var paintMsAvg = 0.0
+    private var lastFps = 0f
+    private var fpsWindow = 0
+    private var fpsWindowStart = 0L
+
+    private fun ema(prev: Double, sample: Double): Double =
+        if (prev == 0.0) sample else prev * 0.9 + sample * 0.1
+
     private fun playbackLoop() {
         var lastFrame = Int.MIN_VALUE
         var rendered = 0L
         var dropped = 0L
+        fpsWindowStart = System.nanoTime()
+        fpsWindow = 0
         val startedAt = System.currentTimeMillis()
 
         while (running.get()) {
@@ -333,11 +350,27 @@ class MatrixPlayer(
                     val win = synchronized(readerLock) { window }
                     if (win != null) {
                         if (frameBuffer.size < cfg.channelCount) frameBuffer = ByteArray(cfg.channelCount)
+                        val tDecode0 = System.nanoTime()
                         val ok = win.readFrame(frame, frameBuffer)
+                        val tPaint0 = System.nanoTime()
                         val pixels = if (ok) raster.render(frameBuffer) else raster.blank()
-                        if (view.present(pixels, raster.width, raster.height)) rendered++ else dropped++
+                        val painted = view.present(pixels, raster.width, raster.height)
+                        val tEnd = System.nanoTime()
+                        if (painted) rendered++ else dropped++
                         lastFrame = frame
-                        if (rendered % 40L == 0L) {
+
+                        // Exponential average: one slow frame should show up without a single GC
+                        // pause dominating the reading.
+                        decodeMsAvg = ema(decodeMsAvg, (tPaint0 - tDecode0) / 1e6)
+                        paintMsAvg = ema(paintMsAvg, (tEnd - tPaint0) / 1e6)
+                        fpsWindow++
+                        if (tEnd - fpsWindowStart >= 1_000_000_000L) {
+                            lastFps = fpsWindow * 1e9f / (tEnd - fpsWindowStart)
+                            fpsWindow = 0
+                            fpsWindowStart = tEnd
+                        }
+
+                        if (rendered % 20L == 0L) {
                             publish(
                                 status.copy(
                                     state = State.PLAYING,
@@ -347,7 +380,10 @@ class MatrixPlayer(
                                     syncPackets = clock.syncPackets,
                                     renderedFrames = rendered,
                                     droppedFrames = dropped,
-                                    decodeErrors = win.decodeErrors
+                                    decodeErrors = win.decodeErrors,
+                                    fps = lastFps,
+                                    decodeMs = decodeMsAvg.toFloat(),
+                                    paintMs = paintMsAvg.toFloat()
                                 )
                             )
                         }

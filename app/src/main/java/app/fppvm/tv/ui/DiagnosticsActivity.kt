@@ -97,6 +97,8 @@ class DiagnosticsActivity : ComponentActivity() {
         sb.appendLine("  frame         ${status.frame} / ${status.totalFrames}   step ${status.stepTimeMs} ms")
         sb.appendLine("  drift         ${"%.2f".format(status.driftFrames)} frames   hard resyncs ${status.resyncJumps}")
         sb.appendLine("  rendered      ${status.renderedFrames}   dropped ${status.droppedFrames}   decode errors ${status.decodeErrors}")
+        sb.appendLine("  throughput    ${"%.1f".format(status.fps)} fps   decode ${"%.1f".format(status.decodeMs)} ms   paint ${"%.1f".format(status.paintMs)} ms")
+        sb.appendLine("  budget        ${status.stepTimeMs} ms per frame; used ${"%.0f".format(if (status.stepTimeMs > 0) (status.decodeMs + status.paintMs) * 100f / status.stepTimeMs else 0f)}%")
         if (status.message.isNotBlank()) sb.appendLine("  note          ${status.message}")
         sb.appendLine()
 

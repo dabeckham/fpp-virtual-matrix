@@ -27,6 +27,7 @@ class MatrixRaster(config: MatrixConfig) {
         private set
 
     private var lut: IntArray = buildLut(config)
+    private var identityTone: Boolean = isIdentityTone(config)
 
     fun reconfigure(next: MatrixConfig) {
         val sizeChanged = next.width != config.width || next.height != config.height
@@ -34,6 +35,7 @@ class MatrixRaster(config: MatrixConfig) {
         config = next
         if (sizeChanged) pixels = IntArray(next.width * next.height)
         if (toneChanged || sizeChanged) lut = buildLut(next)
+        identityTone = isIdentityTone(next)
     }
 
     /**
@@ -41,6 +43,45 @@ class MatrixRaster(config: MatrixConfig) {
      * than throwing, so a short frame degrades to a partial image instead of killing the show.
      */
     fun render(channels: ByteArray, offset: Int = 0): IntArray {
+        // A 1280x720 matrix is 921 600 pixels a frame; at 20 fps the general loop's per-pixel
+        // index arithmetic is most of the frame budget on this class of SoC. The overwhelmingly
+        // common case — no flips, no transpose, RGB order — is a straight sequential walk, so it
+        // gets its own loop rather than paying for generality 18 million times a second.
+        if (!config.flipHorizontal && !config.flipVertical && !config.transpose &&
+            config.colorOrder == MatrixConfig.ColorOrder.RGB
+        ) {
+            val n = config.width * config.height
+            if (offset >= 0 && offset + n * 3 <= channels.size) return renderSequential(channels, offset, n)
+        }
+        return renderGeneral(channels, offset)
+    }
+
+    private fun renderSequential(channels: ByteArray, offset: Int, n: Int): IntArray {
+        val out = pixels
+        var si = offset
+        if (identityTone) {
+            // Gamma 1.0 at full brightness is a pass-through, so skip the table entirely.
+            for (di in 0 until n) {
+                out[di] = (0xFF shl 24) or
+                    ((channels[si].toInt() and 0xFF) shl 16) or
+                    ((channels[si + 1].toInt() and 0xFF) shl 8) or
+                    (channels[si + 2].toInt() and 0xFF)
+                si += 3
+            }
+        } else {
+            val table = lut
+            for (di in 0 until n) {
+                out[di] = (0xFF shl 24) or
+                    (table[channels[si].toInt() and 0xFF] shl 16) or
+                    (table[channels[si + 1].toInt() and 0xFF] shl 8) or
+                    table[channels[si + 2].toInt() and 0xFF]
+                si += 3
+            }
+        }
+        return out
+    }
+
+    private fun renderGeneral(channels: ByteArray, offset: Int = 0): IntArray {
         val w = config.width
         val h = config.height
         val order = config.colorOrder
@@ -79,6 +120,9 @@ class MatrixRaster(config: MatrixConfig) {
     }
 
     companion object {
+        /** True when the tone controls would leave every value untouched. */
+        fun isIdentityTone(c: MatrixConfig): Boolean = c.brightness >= 100 && c.gamma == 1.0f
+
         /**
          * Combined gamma + brightness table.
          *

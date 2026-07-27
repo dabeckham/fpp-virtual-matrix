@@ -142,7 +142,11 @@ class MainActivity : ComponentActivity() {
                             s.driftFrames, s.resyncJumps, s.syncPackets
                         )
                     )
-                    append("master ${s.multiSync.lastMaster}  rendered ${s.renderedFrames}")
+                    append(
+                        "%.1f fps  decode %.1f ms  paint %.1f ms
+".format(s.fps, s.decodeMs, s.paintMs)
+                    )
+                    append("master ${s.multiSync.lastMaster}  rendered ${s.renderedFrames}  dropped ${s.droppedFrames}")
                     if (s.message.isNotEmpty()) append("\n${s.message}")
                 }
             } else {

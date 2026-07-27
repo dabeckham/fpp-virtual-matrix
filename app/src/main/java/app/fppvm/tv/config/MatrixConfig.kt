@@ -108,7 +108,12 @@ data class MatrixConfig(
     }
 
     companion object {
-        const val MAX_DIMENSION = 1024
+        /**
+         * Upper bound per axis. 1280x720 (a 1:1 panel-resolution matrix) is 2 764 800 channels,
+         * still inside FPP's own channel ceiling, so the limit is set by the device rather than
+         * the protocol.
+         */
+        const val MAX_DIMENSION = 4096
 
         /** FPP's own channel ceiling (FPPD_MAX_CHANNELS). */
         const val MAX_CHANNEL = 8_388_608
