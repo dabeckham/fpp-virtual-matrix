@@ -440,6 +440,10 @@ async function load() {
 
 // ── file manager ──────────────────────────────────────────────────────────────
 const volumeOf = f => volumes.find(v => (f.path || "").indexOf(v.path + "/") === 0);
+// Video and sequence sit in the same folder on purpose — matching names is what pairs them — so
+// the list has to say which is which.
+const VIDEO_RE = /\.(mp4|mkv|m4v|mov|webm)$/i;
+const isVideo = n => VIDEO_RE.test(n);
 
 function clearSelection() { selected.clear(); paintActions(); }
 
@@ -447,6 +451,13 @@ function paintActions() {
   $("actions").classList.toggle("on", selected.size > 0);
   $("selCount").textContent = selected.size + " selected";
   document.querySelectorAll("[data-sel]").forEach(c => { c.checked = selected.has(c.dataset.sel); });
+}
+
+/** The other half of a name-matched pair, if it is here. */
+function pairedWith(name) {
+  const stem = name.replace(/\.[^.]+$/, "");
+  const other = files.find(f => f.name !== name && f.name.replace(/\.[^.]+$/, "") === stem);
+  return other ? other.name : "";
 }
 
 function isPlaying(name) {
@@ -476,7 +487,10 @@ function renderFiles() {
       const n = esc(f.name);
       html += '<div class="file">' +
         '<input type="checkbox" data-sel="' + n + '">' +
-        '<span class="n' + (isPlaying(f.name) ? ' playing' : '') + '">' + n + '</span>' +
+        '<span class="n' + (isPlaying(f.name) ? ' playing' : '') + '">' + n +
+          (isVideo(f.name) ? ' <span class="s">video</span>' : '') +
+          (pairedWith(f.name) ? ' <span class="s">+ ' + esc(pairedWith(f.name)) + '</span>' : '') +
+        '</span>' +
         '<span class="s">' + bytes(f.size) + '</span>' +
         '<button class="ghost sm" data-play="' + n + '">' + (isPlaying(f.name) ? 'Stop' : 'Play') + '</button>' +
         '</div>';

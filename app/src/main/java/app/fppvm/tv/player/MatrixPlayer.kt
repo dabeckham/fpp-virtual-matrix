@@ -388,7 +388,38 @@ class MatrixPlayer(
      */
     fun playLocal(filename: String, loop: Boolean = true): Boolean {
         val file = store.localFile(filename) ?: return false
+
+        // A video on its own is a legitimate thing to play: the file being a video *is* the
+        // instruction, exactly as a video beside a sequence means play both. There is no sequence
+        // to open, so this must not go anywhere near the FSEQ reader.
+        if (SequenceStore.VIDEO_EXTENSIONS.any { file.name.endsWith(".$it", ignoreCase = true) }) {
+            clock.stop()
+            synchronized(readerLock) {
+                reader?.close()
+                reader = null
+                window = null
+            }
+            localLoop = loop
+            localPlayback = true
+            onVideoPair?.invoke(file)
+            publish(
+                status.copy(
+                    state = State.PLAYING, sequence = file.name, frame = -1,
+                    totalFrames = 0, stepTimeMs = 0,
+                    source = Source.LOCAL, loop = loop, message = "playing video"
+                )
+            )
+            return true
+        }
+
         loadLocal(file, masterIp = "", startImmediately = true)
+        // loadLocal publishes ERROR when the file will not open. Reporting success over the top of
+        // that told the caller a file was playing when it had already failed — the API answered
+        // 200 OK for an mp4 the FSEQ reader had just rejected.
+        if (status.state == State.ERROR) {
+            localPlayback = false
+            return false
+        }
         localLoop = loop
         localPlayback = true
         publish(
@@ -402,6 +433,7 @@ class MatrixPlayer(
 
     fun stopLocal() {
         localPlayback = false
+        onVideoPair?.invoke(null)
         clock.stop()
         synchronized(readerLock) {
             reader?.close()
@@ -698,6 +730,14 @@ class MatrixPlayer(
     }
 
     private fun renderIdle(cfg: MatrixConfig, elapsedMs: Long) {
+        // With video behind, "nothing to draw" means show the video, not cover it. The idle
+        // pattern and the status text are both opaque and would hide the picture completely.
+        if (videoUnderlay) {
+            // Clear any status text too, or the last idle message stays burned over the picture.
+            view.statusText = ""
+            view.presentBlank()
+            return
+        }
         // BLANKED came from the master telling the show to go dark. Honour it over idleMode.
         val mode = if (status.state == State.BLANKED) MatrixConfig.IdleMode.BLACK else cfg.idleMode
         when (mode) {
