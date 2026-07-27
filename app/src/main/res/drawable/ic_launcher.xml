@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A lit pixel grid: what the app is, in one glyph. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#0B0E11" android:pathData="M0,0h108v108h-108z" />
+    <path android:fillColor="#FF5252" android:pathData="M22,22h14v14h-14z" />
+    <path android:fillColor="#FFB300" android:pathData="M47,22h14v14h-14z" />
+    <path android:fillColor="#4DA3FF" android:pathData="M72,22h14v14h-14z" />
+    <path android:fillColor="#FFB300" android:pathData="M22,47h14v14h-14z" />
+    <path android:fillColor="#4DA3FF" android:pathData="M47,47h14v14h-14z" />
+    <path android:fillColor="#69F0AE" android:pathData="M72,47h14v14h-14z" />
+    <path android:fillColor="#4DA3FF" android:pathData="M22,72h14v14h-14z" />
+    <path android:fillColor="#69F0AE" android:pathData="M47,72h14v14h-14z" />
+    <path android:fillColor="#FF5252" android:pathData="M72,72h14v14h-14z" />
+</vector>
