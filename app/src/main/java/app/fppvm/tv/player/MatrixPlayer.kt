@@ -108,9 +108,11 @@ class MatrixPlayer(
         val (sw, sh, dpi) = surfaceMetrics
         panelGeometry = PanelSolver.solve(
             mode = c.panelMode,
-            pitchMm = c.effectivePitchMm,
-            emitterMm = c.effectiveEmitterMm,
-            shape = c.effectiveShape,
+            pitchMm = c.pitchMm,
+            emitterMm = c.emitterMm,
+            shape = c.emitterShape,
+            substrate = c.substrateColor,
+            louvrePercent = c.louvrePercent,
             surfaceWidth = sw,
             surfaceHeight = sh,
             sourceCols = c.width,
@@ -168,7 +170,7 @@ class MatrixPlayer(
         testPattern.reconfigure(next)
         if (frameBuffer.size != next.channelCount) frameBuffer = ByteArray(next.channelCount)
         view.setConfig(next)
-        view.requestLowColorSurface(next.useLowColor && !next.panelEnabled)
+        view.requestLowColorSurface(next.useLowColor || next.panelEnabled)
         resolvePanel()
         // The channel window is derived from the geometry, so re-open it against the same file.
         synchronized(readerLock) {
@@ -402,7 +404,8 @@ class MatrixPlayer(
                             } else {
                                 raster.renderGrid(ByteArray(0), geo.cols, geo.rows, cfg.downsample)
                             }
-                            view.presentPanel(px, geo, cfg.bloomPercent)
+                            val packed = raster.packGridTo565(geo.cols * geo.rows)
+                            view.presentPanel(px, packed, geo, cfg.bloomPercent)
                         } else if (cfg.useLowColor) {
                             val px = if (ok) raster.render565(frameBuffer) else raster.blank565()
                             view.present565(px, raster.width, raster.height)
@@ -472,10 +475,8 @@ class MatrixPlayer(
                 val data = testPattern.render(elapsedMs)
                 val geo = panelGeometry
                 if (geo != null) {
-                    view.presentPanel(
-                        raster.renderGrid(data, geo.cols, geo.rows, cfg.downsample),
-                        geo, cfg.bloomPercent
-                    )
+                    val gp = raster.renderGrid(data, geo.cols, geo.rows, cfg.downsample)
+                    view.presentPanel(gp, raster.packGridTo565(geo.cols * geo.rows), geo, cfg.bloomPercent)
                 } else if (cfg.useLowColor) {
                     view.present565(raster.render565(data), raster.width, raster.height)
                 } else {

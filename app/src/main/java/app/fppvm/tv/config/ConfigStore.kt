@@ -30,9 +30,25 @@ class ConfigStore(context: Context) {
         prefs.edit().putString(KEY_CONFIG, config.validated().toJson().toString()).apply()
     }
 
-    /** Merges [json] over the stored config, persists the result and returns it. */
+    /**
+     * Merges [json] over the stored config, persists the result and returns it.
+     *
+     * `{"profileId":"p10","applyProfile":true}` loads that profile's appearance first, so the web
+     * page can switch product without having to know every field a profile carries. Anything else
+     * in the same object is then applied on top, which is what makes "load P10, but round" work.
+     */
     fun applyOverride(json: String): MatrixConfig {
-        val merged = MatrixConfig.fromJson(json, load())
+        var base = load()
+        try {
+            val o = org.json.JSONObject(json)
+            if (o.optBoolean("applyProfile", false)) {
+                val id = o.optString("profileId", "")
+                app.fppvm.tv.panel.LedProfiles.byId(id)?.let { base = base.applyProfile(it) }
+            }
+        } catch (t: Throwable) {
+            // A malformed body just means no profile switch; the merge below still runs safely.
+        }
+        val merged = MatrixConfig.fromJson(json, base)
         save(merged)
         return merged
     }

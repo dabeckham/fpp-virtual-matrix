@@ -15,6 +15,8 @@ import app.fppvm.tv.player.MatrixPlayer
 import app.fppvm.tv.proto.FppCodec
 import app.fppvm.tv.proto.MultiSyncClient
 import app.fppvm.tv.render.MatrixSurfaceView
+import app.fppvm.tv.web.WebConfigServer
+import org.json.JSONObject
 import app.fppvm.tv.ui.DiagnosticsActivity
 import app.fppvm.tv.ui.SettingsActivity
 import java.io.File
@@ -32,6 +34,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: SequenceStore
     private lateinit var player: MatrixPlayer
     private var client: MultiSyncClient? = null
+    private var web: WebConfigServer? = null
 
     private var config: MatrixConfig = MatrixConfig.DEFAULT
 
@@ -96,6 +99,7 @@ class MainActivity : ComponentActivity() {
         publishSurfaceMetrics()
         player.start()
         startMultiSync()
+        startWebServer()
         updateOverlay()
     }
 
@@ -103,7 +107,85 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         client?.stop()
         client = null
+        try {
+            web?.stop()
+        } catch (_: Throwable) {
+        }
+        web = null
         player.stop()
+    }
+
+    /**
+     * Brings up the config page and the FPP-compatible file API.
+     *
+     * Runs only while the activity is foreground, which is the whole life of this app anyway, and
+     * means a backgrounded display is not quietly serving a config surface.
+     */
+    private fun startWebServer() {
+        if (!config.webServerEnabled) return
+        try {
+            val s = WebConfigServer(
+                context = this,
+                port = config.webPort,
+                onConfigChanged = { next ->
+                    runOnUiThread {
+                        config = next
+                        player.applyConfig(next)
+                        updateOverlay()
+                    }
+                },
+                statusJson = { statusJson() },
+                identityJson = { identityJson() }
+            )
+            s.password = config.webPassword
+            s.start(WebConfigServer.SOCKET_READ_TIMEOUT, true)
+            web = s
+            android.util.Log.i("FppVm", "web config on http://${client?.localIpv4() ?: "?"}:${config.webPort}")
+        } catch (t: Throwable) {
+            android.util.Log.w("FppVm", "web server failed to start", t)
+        }
+    }
+
+    private fun statusJson(): JSONObject {
+        val st = player.currentStatus()
+        return JSONObject().apply {
+            put("state", st.state.name)
+            put("sequence", st.sequence)
+            put("frame", st.frame)
+            put("totalFrames", st.totalFrames)
+            put("stepTimeMs", st.stepTimeMs)
+            put("fps", String.format("%.1f", st.fps))
+            put("decodeMs", String.format("%.1f", st.decodeMs))
+            put("paintMs", String.format("%.1f", st.paintMs))
+            put("driftFrames", String.format("%.2f", st.driftFrames))
+            put("resyncJumps", st.resyncJumps)
+            put("master", st.multiSync.lastMaster)
+            put("syncPackets", st.syncPackets)
+            st.panel?.let {
+                put("panel", it.describe())
+                put("degraded", it.degraded)
+                put("cells", it.cellCount)
+            }
+        }
+    }
+
+    /**
+     * FPP-shaped identity. xLights finds a device via the MultiSync ping and then asks this over
+     * HTTP to work out what it is talking to, so the field names have to be FPP's, not ours.
+     */
+    private fun identityJson(): JSONObject = JSONObject().apply {
+        put("HostName", config.hostname.ifBlank { defaultHostname() })
+        put("HostDescription", "Android TV Virtual Matrix")
+        put("Platform", "Android")
+        put("Variant", Build.MODEL)
+        put("Mode", "remote")
+        put("Version", BuildInfo.VERSION)
+        put("majorVersion", 8)
+        put("minorVersion", 0)
+        put("typeId", app.fppvm.tv.proto.FppProtocol.SYS_TYPE_FPP)
+        put("channelRanges", config.rangesString())
+        put("IPs", org.json.JSONArray().put(client?.localIpv4() ?: "0.0.0.0"))
+        put("multisync", config.multiSyncEnabled)
     }
 
     override fun onDestroy() {

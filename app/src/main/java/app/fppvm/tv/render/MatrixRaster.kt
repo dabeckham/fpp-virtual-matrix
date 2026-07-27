@@ -177,6 +177,24 @@ class MatrixRaster(config: MatrixConfig) {
     var gridPixels: IntArray = IntArray(0)
         private set
 
+    /** The same grid packed to RGB565. The grid is small, so packing costs almost nothing. */
+    var gridPixels565: ShortArray = ShortArray(0)
+        private set
+
+    /** Packs [gridPixels] to 565 in place. Call after [renderGrid]. */
+    fun packGridTo565(count: Int): ShortArray {
+        if (gridPixels565.size != count) gridPixels565 = ShortArray(count)
+        val src = gridPixels
+        val out = gridPixels565
+        for (i in 0 until count) {
+            val p = src[i]
+            out[i] = ((((p ushr 16) and 0xF8) shl 8) or
+                (((p ushr 8) and 0xFC) shl 3) or
+                ((p and 0xFF) ushr 3)).toShort()
+        }
+        return out
+    }
+
     /**
      * Resamples the source matrix onto a `cols x rows` grid of emitters.
      *

@@ -92,8 +92,9 @@ class DiagnosticsActivity : ComponentActivity() {
         if (config.panelEnabled) {
             sb.appendLine()
             sb.appendLine("PANEL SIMULATION")
-            sb.appendLine("  mode          ${config.panelMode}   preset ${config.panelPreset.label}")
-            sb.appendLine("  requested     pitch ${"%.2f".format(config.effectivePitchMm)} mm   emitter ${"%.2f".format(config.effectiveEmitterMm)} mm   ${config.effectiveShape}")
+            sb.appendLine("  mode          ${config.panelMode}   profile ${config.profileLabel}")
+            sb.appendLine("  requested     pitch ${"%.2f".format(config.pitchMm)} mm   emitter ${"%.2f".format(config.emitterMm)} mm   ${config.emitterShape}")
+            sb.appendLine("  surface       substrate #${Integer.toHexString(config.substrateColor)}   louvre ${config.louvrePercent}%")
             val g = status.panel
             if (g == null) {
                 sb.appendLine("  achieved      (not solved yet)")

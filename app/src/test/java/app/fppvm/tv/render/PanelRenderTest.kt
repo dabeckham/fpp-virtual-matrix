@@ -85,6 +85,7 @@ class PanelRenderTest {
         shape: EmitterShape = EmitterShape.ROUND
     ) = PanelGeometry(
         cols = cols, rows = rows, cellPx = cellPx, emitterPx = emitterPx, shape = shape,
+        substrate = app.fppvm.tv.panel.LedProfile.SUBSTRATE_NONE, louvrePercent = 0,
         dpi = 46f, achievedPitchMm = 25.4f, achievedEmitterMm = 12f,
         widthPx = (cols * cellPx).toInt(), heightPx = (rows * cellPx).toInt(),
         degraded = false, note = ""

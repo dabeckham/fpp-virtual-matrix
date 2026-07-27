@@ -26,6 +26,7 @@ class PanelSolverTest {
         dpi: Float = DPI
     ) = PanelSolver.solve(
         mode = mode, pitchMm = pitch, emitterMm = emitter, shape = shape,
+        substrate = LedProfile.SUBSTRATE_BLACK_MASK, louvrePercent = 0,
         surfaceWidth = W, surfaceHeight = H, sourceCols = srcCols, sourceRows = srcRows,
         reportedDpi = dpi
     )
@@ -61,13 +62,15 @@ class PanelSolverTest {
     @Test
     fun `the P-series lands where the pitch says it should`() {
         // px per mm = 46/25.4 = 1.811
-        val p10 = solve(PanelPreset.P10.pitchMm, PanelPreset.P10.emitterMm, EmitterShape.SQUARE)
+        val p10p = LedProfiles.byId("p10")!!
+        val p10 = solve(p10p.pitchMm, p10p.emitterMm, EmitterShape.SQUARE)
         assertEquals(18.11f, p10.cellPx, 0.02f)
         assertEquals(70, p10.cols)
         assertEquals(39, p10.rows)
         assertFalse("P10 cells are 18 px, well above the floor", p10.degraded)
 
-        val p5 = solve(PanelPreset.P5.pitchMm, PanelPreset.P5.emitterMm, EmitterShape.SQUARE)
+        val p5p = LedProfiles.byId("p5")!!
+        val p5 = solve(p5p.pitchMm, p5p.emitterMm, EmitterShape.SQUARE)
         assertEquals(9.06f, p5.cellPx, 0.02f)
         assertEquals(141, p5.cols)
         assertEquals(79, p5.rows)
@@ -79,11 +82,13 @@ class PanelSolverTest {
         // 2.5mm at 46dpi is 4.53 px a cell and a 1.6mm emitter is 2.9 px — the emitter is under
         // the floor, so the aperture cannot be drawn and the app must admit that rather than
         // render mush.
-        val g = solve(PanelPreset.P2_5.pitchMm, PanelPreset.P2_5.emitterMm, EmitterShape.SQUARE)
+        val p = LedProfiles.byId("p2_5")!!
+        val g = solve(p.pitchMm, p.emitterMm, EmitterShape.SQUARE)
         assertEquals(4.53f, g.cellPx, 0.02f)
         assertEquals(282, g.cols)
         assertEquals(159, g.rows)
-        assertEquals(2.9f, g.emitterPx, 0.05f)
+        // SMD1515 is 1.5 mm, which at 46 dpi is 2.7 px.
+        assertEquals(2.72f, g.emitterPx, 0.05f)
         assertFalse("cell is above the floor", g.cellPx < PanelSolver.MIN_CELL_PX)
         assertTrue("emitter is 2.9 px, above the 1.5 px floor", g.emitterPx > PanelSolver.MIN_EMITTER_PX)
     }
@@ -97,8 +102,7 @@ class PanelSolverTest {
 
     @Test
     fun `bullet spacings across the 12 to 50 mm range all solve`() {
-        for (p in listOf(PanelPreset.BULLET_12, PanelPreset.BULLET_19, PanelPreset.BULLET_25,
-                         PanelPreset.BULLET_38, PanelPreset.BULLET_50)) {
+        for (p in LedProfiles.BUILT_IN.filter { it.id.startsWith("bullet_") }) {
             val g = solve(p.pitchMm, p.emitterMm, EmitterShape.ROUND)
             assertFalse("${p.label} should be drawable", g.degraded)
             assertTrue("${p.label} needs at least one cell", g.cols >= 1 && g.rows >= 1)
@@ -148,7 +152,8 @@ class PanelSolverTest {
     fun `a manual dpi override wins over a plausible reported one`() {
         val g = PanelSolver.solve(
             mode = PanelMode.FIT_PHYSICAL, pitchMm = 25.4f, emitterMm = 12f,
-            shape = EmitterShape.ROUND, surfaceWidth = W, surfaceHeight = H,
+            shape = EmitterShape.ROUND, substrate = LedProfile.SUBSTRATE_NONE, louvrePercent = 0,
+            surfaceWidth = W, surfaceHeight = H,
             sourceCols = 64, sourceRows = 32, reportedDpi = 46f, dpiOverride = 92f
         )
         assertEquals(92f, g.dpi, 0.01f)

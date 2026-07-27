@@ -1,9 +1,10 @@
 package app.fppvm.tv.config
 
 import app.fppvm.tv.panel.Downsample
+import app.fppvm.tv.panel.LedProfile
+import app.fppvm.tv.panel.LedProfiles
 import app.fppvm.tv.panel.EmitterShape
 import app.fppvm.tv.panel.PanelMode
-import app.fppvm.tv.panel.PanelPreset
 import org.json.JSONObject
 
 /**
@@ -66,16 +67,31 @@ data class MatrixConfig(
     // --- Physical panel simulation. The look is specified in millimetres and the grid is solved
     // for, because panels differ between installs but "this should look like P10" does not.
     val panelMode: PanelMode = PanelMode.OFF,
-    /** Named product. Anything but CUSTOM overrides pitch/emitter/shape. */
-    val panelPreset: PanelPreset = PanelPreset.CUSTOM,
+    /**
+     * Which profile these values were loaded from. A profile *seeds* the fields below rather than
+     * overriding them, so every parameter stays independently adjustable afterwards; [profileEdited]
+     * records that it no longer matches what was loaded.
+     */
+    val profileId: String = "bullet_25",
+    val profileEdited: Boolean = false,
     val pitchMm: Float = 25.4f,
     val emitterMm: Float = 12.0f,
     val emitterShape: EmitterShape = EmitterShape.ROUND,
+    /** Colour of the unlit surface between emitters. */
+    val substrateColor: Int = LedProfile.SUBSTRATE_NONE,
+    /** Shade above each row, percent of the cell. What makes an outdoor cabinet recognisable. */
+    val louvrePercent: Int = 0,
     /** 0 = trust the display's reported dpi (after a sanity check). */
     val panelDpi: Float = 0f,
     /** 0 = hard-edged apertures; higher spreads the bloom towards the cell corner. */
     val bloomPercent: Int = 45,
-    val downsample: Downsample = Downsample.MAX
+    val downsample: Downsample = Downsample.MAX,
+
+    /** Serve the config page and the FPP file API from this device. */
+    val webServerEnabled: Boolean = true,
+    val webPort: Int = 8080,
+    /** Blank disables auth, matching how the rest of the show kit is normally run. */
+    val webPassword: String = ""
 ) {
     /**
      * HIGH keeps the full ARGB_8888 pipeline. FAST renders straight to RGB565, halving the bytes
@@ -98,15 +114,29 @@ data class MatrixConfig(
 
     val pixelCount: Int get() = width * height
 
-    /** Pitch actually requested, after applying a preset. */
-    val effectivePitchMm: Float get() = if (panelPreset.isCustom) pitchMm else panelPreset.pitchMm
-
-    /** Emitter size actually requested, after applying a preset. */
-    val effectiveEmitterMm: Float get() = if (panelPreset.isCustom) emitterMm else panelPreset.emitterMm
-
-    val effectiveShape: EmitterShape get() = if (panelPreset.isCustom) emitterShape else panelPreset.shape
-
     val panelEnabled: Boolean get() = panelMode != PanelMode.OFF
+
+    /** Label for the current look, marked when it has drifted from the profile it came from. */
+    val profileLabel: String
+        get() {
+            val base = LedProfiles.byId(profileId)?.label ?: profileId
+            return if (profileEdited) "$base (modified)" else base
+        }
+
+    /** Loads a profile's appearance into the config without touching anything else. */
+    fun applyProfile(p: LedProfile): MatrixConfig = copy(
+        profileId = p.id,
+        profileEdited = false,
+        pitchMm = p.pitchMm,
+        emitterMm = p.emitterMm,
+        emitterShape = p.shape,
+        substrateColor = p.substrate,
+        louvrePercent = p.louvrePercent,
+        bloomPercent = p.bloomPercent
+    ).validated()
+
+    /** Marks the look as diverged from its profile. Any edit to an appearance field goes through this. */
+    fun edited(): MatrixConfig = if (profileEdited) this else copy(profileEdited = true)
 
     /** Resolved colour depth: AUTO becomes FAST above a quarter of a megapixel. */
     val useLowColor: Boolean
@@ -132,7 +162,9 @@ data class MatrixConfig(
         // An emitter can never be larger than its pitch; that is what makes the dark fraction.
         emitterMm = emitterMm.coerceIn(0.2f, pitchMm.coerceIn(0.5f, 200f)),
         panelDpi = if (panelDpi <= 0f) 0f else panelDpi.coerceIn(10f, 1200f),
-        bloomPercent = bloomPercent.coerceIn(0, 100)
+        bloomPercent = bloomPercent.coerceIn(0, 100),
+        louvrePercent = louvrePercent.coerceIn(0, 60),
+        webPort = webPort.coerceIn(1024, 65535)
     )
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -158,7 +190,14 @@ data class MatrixConfig(
         put("showOverlay", showOverlay)
         put("colorDepth", colorDepth.name)
         put("panelMode", panelMode.name)
-        put("panelPreset", panelPreset.name)
+        put("profileId", profileId)
+        put("profileEdited", profileEdited)
+        put("substrateColor", substrateColor)
+        put("louvrePercent", louvrePercent)
+        put("webServerEnabled", webServerEnabled)
+        put("webPort", webPort)
+        // profileLabel is derived, and read-only: the page shows it, fromJson ignores it.
+        put("profileLabel", profileLabel)
         put("pitchMm", pitchMm.toDouble())
         put("emitterMm", emitterMm.toDouble())
         put("emitterShape", emitterShape.name)
@@ -214,13 +253,19 @@ data class MatrixConfig(
             showOverlay = o.optBoolean("showOverlay", base.showOverlay),
             colorDepth = enumOr(o.optString("colorDepth"), base.colorDepth),
             panelMode = enumOr(o.optString("panelMode"), base.panelMode),
-            panelPreset = enumOr(o.optString("panelPreset"), base.panelPreset),
+            profileId = o.optString("profileId", base.profileId),
+            profileEdited = o.optBoolean("profileEdited", base.profileEdited),
+            substrateColor = o.optInt("substrateColor", base.substrateColor),
+            louvrePercent = o.optInt("louvrePercent", base.louvrePercent),
             pitchMm = o.optDouble("pitchMm", base.pitchMm.toDouble()).toFloat(),
             emitterMm = o.optDouble("emitterMm", base.emitterMm.toDouble()).toFloat(),
             emitterShape = enumOr(o.optString("emitterShape"), base.emitterShape),
             panelDpi = o.optDouble("panelDpi", base.panelDpi.toDouble()).toFloat(),
             bloomPercent = o.optInt("bloomPercent", base.bloomPercent),
-            downsample = enumOr(o.optString("downsample"), base.downsample)
+            downsample = enumOr(o.optString("downsample"), base.downsample),
+            webServerEnabled = o.optBoolean("webServerEnabled", base.webServerEnabled),
+            webPort = o.optInt("webPort", base.webPort),
+            webPassword = o.optString("webPassword", base.webPassword)
         ).validated()
 
         private inline fun <reified T : Enum<T>> enumOr(name: String?, fallback: T): T {

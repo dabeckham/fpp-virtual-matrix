@@ -62,6 +62,9 @@ dependencies {
     // zlib is handled by java.util.zip.Inflater, which ships with the platform.
     implementation("com.github.luben:zstd-jni:1.5.7-3@aar")
 
+    // Serves the config page and the FPP-compatible file API on the device itself.
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     // Desktop-JVM natives, so the FSEQ round-trip tests can actually compress/decompress on CI.

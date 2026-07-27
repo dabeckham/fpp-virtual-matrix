@@ -48,35 +48,6 @@ enum class Downsample {
     MEAN
 }
 
-/** Named products, so the common cases are one setting rather than four. */
-enum class PanelPreset(
-    val label: String,
-    val pitchMm: Float,
-    val emitterMm: Float,
-    val shape: EmitterShape
-) {
-    CUSTOM("Custom", 25.4f, 12.0f, EmitterShape.ROUND),
-
-    // SMD cabinets. Emitter figures are the visible emitting area including the package's black
-    // mask, not the die — that is what sets the apparent fill.
-    P2_5("P2.5", 2.5f, 1.6f, EmitterShape.SQUARE),
-    P3("P3", 3.0f, 1.8f, EmitterShape.SQUARE),
-    P4("P4", 4.0f, 2.2f, EmitterShape.SQUARE),
-    P5("P5", 5.0f, 2.8f, EmitterShape.SQUARE),
-    P6("P6", 6.0f, 3.2f, EmitterShape.SQUARE),
-    P8("P8", 8.0f, 3.6f, EmitterShape.SQUARE),
-    P10("P10", 10.0f, 5.0f, EmitterShape.SQUARE),
-
-    // 12 mm bullet/seed pixels at the usual spacings.
-    BULLET_12("Bullet 12mm @ 12mm", 12.0f, 12.0f, EmitterShape.ROUND),
-    BULLET_19("Bullet 12mm @ 19mm", 19.05f, 12.0f, EmitterShape.ROUND),
-    BULLET_25("Bullet 12mm @ 25mm", 25.4f, 12.0f, EmitterShape.ROUND),
-    BULLET_38("Bullet 12mm @ 38mm", 38.1f, 12.0f, EmitterShape.ROUND),
-    BULLET_50("Bullet 12mm @ 50mm", 50.0f, 12.0f, EmitterShape.ROUND);
-
-    val isCustom: Boolean get() = this == CUSTOM
-}
-
 /**
  * A solved layout. Everything the renderer needs, plus what was actually achieved so the UI can be
  * honest about it — "you asked for 25.4 mm, this panel gives 24.9 mm at 27x15" is the difference
@@ -90,6 +61,10 @@ data class PanelGeometry(
     /** Emitter size in surface pixels — diameter for [EmitterShape.ROUND], side for SQUARE. */
     val emitterPx: Float,
     val shape: EmitterShape,
+    /** Colour of the unlit surface; most of the panel is this. */
+    val substrate: Int,
+    /** Shade depth above each row, percent of the cell. 0 for indoor and for strands. */
+    val louvrePercent: Int,
     val dpi: Float,
     val achievedPitchMm: Float,
     val achievedEmitterMm: Float,
@@ -158,6 +133,8 @@ object PanelSolver {
         pitchMm: Float,
         emitterMm: Float,
         shape: EmitterShape,
+        substrate: Int,
+        louvrePercent: Int,
         surfaceWidth: Int,
         surfaceHeight: Int,
         sourceCols: Int,
@@ -217,6 +194,8 @@ object PanelSolver {
             cellPx = cellPx,
             emitterPx = emitterPx,
             shape = shape,
+            substrate = substrate,
+            louvrePercent = louvrePercent.coerceIn(0, 60),
             dpi = dpi,
             achievedPitchMm = cellPx / pxPerMm,
             achievedEmitterMm = emitterPx / pxPerMm,

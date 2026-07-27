@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FPP Virtual Matrix</title>
+<style>
+:root { color-scheme: dark; --bg:#0d0f12; --card:#171a1f; --line:#262b33; --fg:#e8eaed; --dim:#9aa0a6; --accent:#4da3ff; }
+* { box-sizing:border-box; }
+body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+       font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+h1 { font-size:19px; margin:0 0 4px; }
+.sub { color:var(--dim); font-size:13px; margin-bottom:16px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+.card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim);
+           margin:0 0 12px; font-weight:600; }
+.row { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.row:last-child { margin-bottom:0; }
+label { flex:0 0 128px; font-size:14px; }
+input[type=range] { flex:1; accent-color:var(--accent); min-width:0; }
+input[type=number], select, input[type=text] { flex:1; min-width:0; background:#0f1216; color:var(--fg);
+  border:1px solid var(--line); border-radius:7px; padding:9px 10px; font-size:15px; }
+.val { flex:0 0 78px; text-align:right; font-variant-numeric:tabular-nums; color:var(--accent); font-size:14px; }
+button { background:var(--accent); color:#06121f; border:0; border-radius:7px; padding:11px 15px;
+         font-size:15px; font-weight:600; cursor:pointer; }
+button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
+.btns { display:flex; gap:9px; flex-wrap:wrap; }
+pre { margin:0; font-size:12px; line-height:1.5; color:var(--dim); white-space:pre-wrap; word-break:break-word; }
+.achieved { color:var(--accent); font-size:13px; margin-top:10px; }
+.warn { color:#ffb86b; }
+@media (max-width:520px) { label { flex-basis:96px; font-size:13px; } }
+</style>
+</head>
+<body>
+<h1>FPP Virtual Matrix</h1>
+<div class="sub" id="sub">connecting…</div>
+
+<div class="card">
+  <h2>LED profile</h2>
+  <div class="row">
+    <label for="profile">Product</label>
+    <select id="profile"></select>
+  </div>
+  <div class="row">
+    <label for="panelMode">Mode</label>
+    <select id="panelMode">
+      <option value="OFF">Off — one show pixel per screen pixel</option>
+      <option value="FIT_PHYSICAL">Fit physical — pitch wins</option>
+      <option value="MATCH_SOURCE">Match source — show size wins</option>
+    </select>
+  </div>
+  <div class="achieved" id="achieved"></div>
+</div>
+
+<div class="card">
+  <h2>Geometry — every value stays adjustable</h2>
+  <div class="row"><label for="pitchMm">Pitch</label><input type="range" id="pitchMm" min="1" max="60" step="0.1"><div class="val" id="pitchMmV"></div></div>
+  <div class="row"><label for="emitterMm">Emitter</label><input type="range" id="emitterMm" min="0.3" max="30" step="0.1"><div class="val" id="emitterMmV"></div></div>
+  <div class="row">
+    <label for="emitterShape">Shape</label>
+    <select id="emitterShape"><option value="ROUND">Round (bullet / DIP)</option><option value="SQUARE">Square (SMD)</option></select>
+  </div>
+  <div class="row"><label for="louvrePercent">Louvre</label><input type="range" id="louvrePercent" min="0" max="40" step="1"><div class="val" id="louvrePercentV"></div></div>
+  <div class="row"><label for="bloomPercent">Bloom</label><input type="range" id="bloomPercent" min="0" max="100" step="1"><div class="val" id="bloomPercentV"></div></div>
+  <div class="row">
+    <label for="substrateColor">Substrate</label>
+    <select id="substrateColor">
+      <option value="-16777216">Black</option>
+      <option value="-16250872">Black mask</option>
+      <option value="-16768982">Grey PCB</option>
+    </select>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Image</h2>
+  <div class="row"><label for="brightness">Brightness</label><input type="range" id="brightness" min="1" max="100" step="1"><div class="val" id="brightnessV"></div></div>
+  <div class="row"><label for="gamma">Gamma</label><input type="range" id="gamma" min="0.4" max="3" step="0.05"><div class="val" id="gammaV"></div></div>
+  <div class="row">
+    <label for="downsample">Resample</label>
+    <select id="downsample"><option value="MAX">Max — keeps single lit pixels</option><option value="MEAN">Mean — averages</option></select>
+  </div>
+  <div class="row"><label for="width">Show width</label><input type="number" id="width" min="1" max="4096"></div>
+  <div class="row"><label for="height">Show height</label><input type="number" id="height" min="1" max="4096"></div>
+  <div class="row"><label for="startChannel">Start channel</label><input type="number" id="startChannel" min="1"></div>
+</div>
+
+<div class="card">
+  <h2>Save as a profile</h2>
+  <div class="row"><label for="newName">Name</label><input type="text" id="newName" placeholder="e.g. P10 round, my roofline"></div>
+  <div class="btns"><button id="save">Save profile</button><button class="ghost" id="reload">Reload</button></div>
+</div>
+
+<div class="card">
+  <h2>Status</h2>
+  <pre id="status">…</pre>
+</div>
+
+<script>
+const FIELDS = ["pitchMm","emitterMm","louvrePercent","bloomPercent","brightness","gamma",
+                "width","height","startChannel","emitterShape","substrateColor","downsample","panelMode"];
+const DECIMALS = { pitchMm:2, emitterMm:2, gamma:2 };
+let cfg = {}, sending = false, pending = false;
+
+const $ = id => document.getElementById(id);
+const fmt = (k,v) => k in DECIMALS ? Number(v).toFixed(DECIMALS[k]) : v;
+
+function paint() {
+  for (const k of FIELDS) {
+    const el = $(k); if (!el || !(k in cfg)) continue;
+    el.value = cfg[k];
+    const v = $(k + "V"); if (v) v.textContent = fmt(k, cfg[k]);
+  }
+  $("sub").textContent = cfg.profileLabel || "";
+}
+
+async function load() {
+  cfg = await (await fetch("api/config")).json();
+  const profiles = await (await fetch("api/profiles")).json();
+  const sel = $("profile");
+  sel.innerHTML = "";
+  for (const p of profiles) {
+    const o = document.createElement("option");
+    o.value = p.id;
+    o.textContent = p.label + (p.packageName ? "  (" + p.packageName + ")" : "");
+    sel.appendChild(o);
+  }
+  sel.value = cfg.profileId || "";
+  paint();
+}
+
+// Coalesce while dragging: one request in flight, one queued. Keeps a slider responsive on a
+// phone without flooding a device that is already busy painting frames.
+async function push(patch) {
+  Object.assign(cfg, patch);
+  paint();
+  if (sending) { pending = true; return; }
+  sending = true;
+  try {
+    const r = await fetch("api/config", {
+      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(patch)
+    });
+    cfg = await r.json();
+    paint();
+  } catch (e) { /* keep the UI usable if a write is lost */ }
+  sending = false;
+  if (pending) { pending = false; push({}); }
+}
+
+for (const k of FIELDS) {
+  const el = $(k); if (!el) continue;
+  const ev = el.type === "range" ? "input" : "change";
+  el.addEventListener(ev, () => {
+    const raw = el.type === "number" || el.type === "range" ? Number(el.value) : el.value;
+    push({ [k]: raw });
+  });
+}
+
+$("profile").addEventListener("change", () => push({ profileId: $("profile").value, applyProfile: true }));
+$("reload").addEventListener("click", load);
+$("save").addEventListener("click", async () => {
+  const name = $("newName").value.trim();
+  if (!name) return;
+  const body = {
+    id: "user_" + name.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+    label: name, pitchMm: cfg.pitchMm, emitterMm: cfg.emitterMm, shape: cfg.emitterShape,
+    substrate: cfg.substrateColor, louvrePercent: cfg.louvrePercent,
+    bloomPercent: cfg.bloomPercent, builtIn: false
+  };
+  await fetch("api/profiles", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  $("newName").value = "";
+  load();
+});
+
+async function poll() {
+  try {
+    const s = await (await fetch("api/status")).json();
+    $("status").textContent = Object.entries(s).map(([k, v]) => k.padEnd(16) + v).join("\n");
+    if (s.panel) $("achieved").textContent = s.panel;
+    if (s.degraded === true) $("achieved").className = "achieved warn";
+  } catch (e) { $("status").textContent = "no status"; }
+}
+
+load().then(poll);
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

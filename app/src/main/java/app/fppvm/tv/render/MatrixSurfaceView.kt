@@ -296,6 +296,7 @@ class MatrixSurfaceView @JvmOverloads constructor(
      */
     fun presentPanel(
         pixels: IntArray,
+        packed565: ShortArray?,
         geometry: app.fppvm.tv.panel.PanelGeometry,
         bloomPercent: Int
     ): Boolean {
@@ -303,10 +304,19 @@ class MatrixSurfaceView @JvmOverloads constructor(
         synchronized(lock) {
             val cols = geometry.cols
             val rows = geometry.rows
-            if (cols <= 0 || rows <= 0 || pixels.size < cols * rows) return false
-            ensureBitmap(cols, rows, Bitmap.Config.ARGB_8888)
+            if (cols <= 0 || rows <= 0) return false
+            val cells = cols * rows
+            // The grid bitmap is tiny either way; the win from 565 is in the full-screen scaled
+            // blit that follows, which is the dominant per-frame cost on this SoC.
+            if (packed565 != null && packed565.size >= cells) {
+                ensureBitmap(cols, rows, Bitmap.Config.RGB_565)
+                (bitmap ?: return false).copyPixelsFromBuffer(shortBuffer(packed565, cells))
+            } else {
+                if (pixels.size < cells) return false
+                ensureBitmap(cols, rows, Bitmap.Config.ARGB_8888)
+                (bitmap ?: return false).setPixels(pixels, 0, cols, 0, 0, cols, rows)
+            }
             val bmp = bitmap ?: return false
-            bmp.setPixels(pixels, 0, cols, 0, 0, cols, rows)
 
             val canvas = try {
                 holder.lockCanvas()
@@ -314,6 +324,8 @@ class MatrixSurfaceView @JvmOverloads constructor(
                 null
             } ?: return false
             try {
+                // Off-panel area stays black; the module face gets the substrate colour, because
+                // 65-80% of what you are looking at is the unlit surface.
                 canvas.drawColor(Color.BLACK, PorterDuff.Mode.SRC)
                 val left = (canvas.width - geometry.widthPx) / 2
                 val top = (canvas.height - geometry.heightPx) / 2
@@ -325,6 +337,7 @@ class MatrixSurfaceView @JvmOverloads constructor(
                 if (!geometry.degraded) {
                     val mask = panelMaskFor(geometry, bloomPercent)
                     if (mask != null) {
+                        maskPaint.color = geometry.substrate
                         canvas.drawBitmap(mask, dstRect.left.toFloat(), dstRect.top.toFloat(), maskPaint)
                     }
                 }

@@ -87,20 +87,28 @@ class SettingsActivity : ComponentActivity() {
         Setting("Panel simulation", "look like real LEDs", { it.panelMode.name }) { c, d ->
             c.copy(panelMode = cycle(app.fppvm.tv.panel.PanelMode.entries, c.panelMode, d))
         },
-        Setting("Panel preset", "P10 / P5 / bullet", { it.panelPreset.label }) { c, d ->
-            c.copy(panelPreset = cycle(app.fppvm.tv.panel.PanelPreset.entries, c.panelPreset, d))
+        Setting("LED profile", "loads values, does not lock them", { it.profileLabel }) { c, d ->
+            val lib = app.fppvm.tv.panel.LedProfiles.BUILT_IN
+            val i = lib.indexOfFirst { p -> p.id == c.profileId }.coerceAtLeast(0)
+            c.applyProfile(lib[(((i + d) % lib.size) + lib.size) % lib.size])
         },
-        Setting("Pitch", "mm, when preset is Custom", { "%.2f".format(it.effectivePitchMm) }) { c, d ->
-            c.copy(panelPreset = app.fppvm.tv.panel.PanelPreset.CUSTOM, pitchMm = c.effectivePitchMm + d * 0.5f)
+        Setting("Pitch", "mm, centre to centre", { "%.2f".format(it.pitchMm) }) { c, d ->
+            c.copy(pitchMm = c.pitchMm + d * 0.5f).edited()
         },
-        Setting("Emitter", "mm, when preset is Custom", { "%.2f".format(it.effectiveEmitterMm) }) { c, d ->
-            c.copy(panelPreset = app.fppvm.tv.panel.PanelPreset.CUSTOM, emitterMm = c.effectiveEmitterMm + d * 0.25f)
+        Setting("Emitter", "mm, visible package face", { "%.2f".format(it.emitterMm) }) { c, d ->
+            c.copy(emitterMm = c.emitterMm + d * 0.1f).edited()
         },
-        Setting("Emitter shape", "round bulb / square SMD", { it.effectiveShape.name }) { c, d ->
-            c.copy(panelPreset = app.fppvm.tv.panel.PanelPreset.CUSTOM, emitterShape = cycle(app.fppvm.tv.panel.EmitterShape.entries, c.effectiveShape, d))
+        Setting("Emitter shape", "round bulb / square SMD", { it.emitterShape.name }) { c, d ->
+            c.copy(emitterShape = cycle(app.fppvm.tv.panel.EmitterShape.entries, c.emitterShape, d)).edited()
         },
-        Setting("Bloom", "% of the way to the cell corner", { "${it.bloomPercent}" }) { c, d ->
-            c.copy(bloomPercent = c.bloomPercent + d * 5)
+        Setting("Substrate", "unlit surface colour", { substrateName(it.substrateColor) }) { c, d ->
+            c.copy(substrateColor = cycle(SUBSTRATES, c.substrateColor, d)).edited()
+        },
+        Setting("Louvre", "outdoor shade, % of cell", { "${it.louvrePercent}" }) { c, d ->
+            c.copy(louvrePercent = c.louvrePercent + d * 2).edited()
+        },
+        Setting("Bloom", "% toward the cell corner", { "${it.bloomPercent}" }) { c, d ->
+            c.copy(bloomPercent = c.bloomPercent + d * 5).edited()
         },
         Setting("Resample", "MAX keeps single lit pixels", { it.downsample.name }) { c, d ->
             c.copy(downsample = cycle(app.fppvm.tv.panel.Downsample.entries, c.downsample, d))
@@ -108,6 +116,9 @@ class SettingsActivity : ComponentActivity() {
         Setting("Panel dpi", "0 = use the reported value", { if (it.panelDpi <= 0f) "auto" else "%.0f".format(it.panelDpi) }) { c, d ->
             val next = if (c.panelDpi <= 0f && d > 0) 46f else c.panelDpi + d
             c.copy(panelDpi = if (next < 10f) 0f else next)
+        },
+        Setting("Web config", "browse to this TV to configure it", { yesNo(it.webServerEnabled) }) { c, _ ->
+            c.copy(webServerEnabled = !c.webServerEnabled)
         }
     )
 
@@ -197,6 +208,18 @@ class SettingsActivity : ComponentActivity() {
         private val ACCENT_DIM = Color.parseColor("#25405C")
 
         private fun yesNo(b: Boolean) = if (b) "on" else "off"
+
+        private val SUBSTRATES = listOf(
+            app.fppvm.tv.panel.LedProfile.SUBSTRATE_NONE,
+            app.fppvm.tv.panel.LedProfile.SUBSTRATE_BLACK_MASK,
+            app.fppvm.tv.panel.LedProfile.SUBSTRATE_GREY_PCB
+        )
+
+        private fun substrateName(c: Int) = when (c) {
+            app.fppvm.tv.panel.LedProfile.SUBSTRATE_GREY_PCB -> "grey PCB"
+            app.fppvm.tv.panel.LedProfile.SUBSTRATE_BLACK_MASK -> "black mask"
+            else -> "black"
+        }
 
         private fun <T> cycle(values: List<T>, current: T, delta: Int): T {
             if (values.isEmpty()) return current
