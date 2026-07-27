@@ -228,7 +228,11 @@ class MatrixPlayer(
         if (frameBuffer.size != next.channelCount) frameBuffer = ByteArray(next.channelCount)
         if (ddpBuffer.size != next.channelCount) ddpBuffer = ByteArray(next.channelCount)
         view.setConfig(next)
-        view.requestLowColorSurface(next.useLowColor || next.panelEnabled)
+        // Not `|| panelEnabled` any more. The panel path draws a grid bitmap of only cols*rows
+        // pixels, so 16-bit buys nothing on the upload, and forcing a 565 *surface* appears to
+        // cost a conversion during composition on this display. Leave the choice to colorDepth,
+        // which FAST still forces.
+        view.requestLowColorSurface(next.useLowColor)
         resolvePanel()
         // The channel window is derived from the geometry, so re-open it against the same file.
         synchronized(readerLock) {

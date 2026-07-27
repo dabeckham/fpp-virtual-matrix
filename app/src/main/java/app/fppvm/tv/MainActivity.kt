@@ -242,7 +242,7 @@ class MainActivity : ComponentActivity() {
             videoView.visibility = View.GONE
             matrixView.videoUnderlay = false
             player.videoUnderlay = false
-            matrixView.requestLowColorSurface(config.useLowColor || config.panelEnabled)
+            matrixView.requestLowColorSurface(config.useLowColor)
             return
         }
         videoView.visibility = View.VISIBLE
