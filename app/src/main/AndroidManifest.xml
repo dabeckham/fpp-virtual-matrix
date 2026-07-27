@@ -25,9 +25,14 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.FppVm">
 
+        <!-- singleTask so a repeat `am start ... --es config` is delivered to the running
+             instance via onNewIntent. With the default standard mode the launcher just brings
+             the existing task to the front and the extras are silently dropped, so only the
+             very first launch after a cold start could be configured. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>

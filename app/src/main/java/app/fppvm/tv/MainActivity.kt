@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
         applyIntentOverride(intent)?.let {
             config = it
             player.applyConfig(it)
+            updateOverlay()
         }
     }
 
