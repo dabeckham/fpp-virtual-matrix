@@ -282,10 +282,12 @@ class MatrixRaster(config: MatrixConfig) {
                     val og = table[fg]
                     val ob = table[fb]
                     val alpha = if (alphaFromBrightness) {
-                        // Rises fast: a real LED at half power still reads as a lit LED rather
-                        // than a half-transparent one. Only true black disappears entirely.
-                        val lum = (or_ * 2 + og * 5 + ob) / 8
-                        if (lum <= 0) 0 else (lum * ALPHA_RAMP).coerceAtMost(255)
+                        // The strongest channel, NOT perceptual luminance. A blue LED at full
+                        // power is fully on; weighting it the way an eye weights brightness
+                        // scores it 31 against red's 63 and leaves it half see-through, which
+                        // measured as video bleeding straight through blue emitters.
+                        val peak = if (or_ > og) (if (or_ > ob) or_ else ob) else (if (og > ob) og else ob)
+                        if (peak <= 0) 0 else (peak * ALPHA_RAMP).coerceAtMost(255)
                     } else {
                         0xFF
                     }
@@ -306,9 +308,10 @@ class MatrixRaster(config: MatrixConfig) {
         /**
          * How fast a cell becomes opaque as it lights up, when alpha carries brightness.
          *
-         * 4 means anything above a quarter brightness is fully opaque. Deliberately steep: an LED
-         * is either emitting or it is not, and a gentle ramp would make every dim part of a show
-         * look like a translucent haze over the video rather than like dim LEDs.
+         * Applied to the strongest colour channel, so anything above a quarter power is fully
+         * opaque. Deliberately steep: an LED is a physical object that blocks what is behind it
+         * the moment it lights, and a gentle ramp would make every dim part of a show read as a
+         * translucent haze over the video instead of as dim LEDs.
          */
         const val ALPHA_RAMP = 4
 
