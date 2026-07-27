@@ -593,8 +593,19 @@ class MatrixPlayer(
         }
     }
 
+    /**
+     * Publishes status, deriving the fields that must never be allowed to go stale.
+     *
+     * [Status.source] and [Status.panel] are computed here rather than set by whichever call site
+     * happened to change them. A stored flag only stays right if every path remembers to update
+     * it, and one already did not.
+     */
     private fun publish(next: Status) {
-        status = next
-        onStatus?.invoke(next)
+        val derived = next.copy(
+            source = if (localPlayback) Source.LOCAL else Source.MASTER,
+            panel = panelGeometry
+        )
+        status = derived
+        onStatus?.invoke(derived)
     }
 }

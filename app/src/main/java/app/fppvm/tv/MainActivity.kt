@@ -227,7 +227,9 @@ class MainActivity : ComponentActivity() {
             put("time", timeStamp())
             put("holdFocus", config.holdFocus)
             put("focusReleasedMinutes", focusGuard?.releaseMinutesRemaining() ?: 0L)
-            st.panel?.let {
+            // Live geometry rather than the last published copy: the achieved figures matter most
+            // while idle, which is when you are adjusting them.
+            (player.panelGeometry() ?: st.panel)?.let {
                 put("panel", it.describe())
                 put("degraded", it.degraded)
                 put("cells", it.cellCount)
