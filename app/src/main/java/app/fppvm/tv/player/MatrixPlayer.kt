@@ -655,7 +655,27 @@ class MatrixPlayer(
                         ddpDriving = true
                         publish(status.copy(state = State.PLAYING, sequence = "", frame = -1, message = "live from $ddpSender"))
                     }
-                    paintChannels(cfg, ddpBuffer)
+                    // Timed like the sequence path. Live output is where the panel is asked to
+                    // paint fastest, so it is the measurement that matters, and it used to report
+                    // nothing at all.
+                    val t0 = System.nanoTime()
+                    if (paintChannels(cfg, ddpBuffer)) rendered++ else dropped++
+                    val t1 = System.nanoTime()
+                    paintMsAvg = ema(paintMsAvg, (t1 - t0) / 1e6)
+                    fpsWindow++
+                    if (t1 - fpsWindowStart >= 1_000_000_000L) {
+                        lastFps = fpsWindow * 1e9f / (t1 - fpsWindowStart)
+                        fpsWindow = 0
+                        fpsWindowStart = t1
+                        publish(
+                            status.copy(
+                                state = State.PLAYING, frame = -1,
+                                renderedFrames = rendered, droppedFrames = dropped,
+                                fps = lastFps, paintMs = paintMsAvg.toFloat(), decodeMs = 0f,
+                                message = "live from $ddpSender"
+                            )
+                        )
+                    }
                     awaitDdpFrame()
                 } else {
                     if (ddpDriving) {
