@@ -76,6 +76,22 @@ class VideoLayerView @JvmOverloads constructor(
     var driftMs: Long = 0
         private set
 
+    /**
+     * Where the show clock last asked the video to be, and where the player said it was.
+     *
+     * Kept as the raw pair rather than only [driftMs] because the two answer different questions:
+     * a residual drift that will not converge is either a real lag or an offset in what
+     * [positionMs] reports, and telling those apart needs the reported figure alongside a capture
+     * of what is actually on screen at the same instant.
+     */
+    @Volatile
+    var followTargetMs: Long = -1
+        private set
+
+    @Volatile
+    var followPosMs: Int = -1
+        private set
+
     /** Playback rate currently in force. 1.0 when not following anything. */
     @Volatile
     var rate: Float = 1f
@@ -193,6 +209,8 @@ class VideoLayerView @JvmOverloads constructor(
         if (pos < 0) return 0f
         val errorMs = targetMs - pos
         driftMs = errorMs
+        followTargetMs = targetMs
+        followPosMs = pos
 
         if (needsSeek(errorMs)) {
             seeks++

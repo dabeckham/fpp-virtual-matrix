@@ -543,6 +543,17 @@ class MainActivity : ComponentActivity() {
                     )
                     appendLine("%.1f fps  decode %.1f ms  paint %.1f ms".format(s.fps, s.decodeMs, s.paintMs))
                     s.panel?.let { appendLine(it.describe()) }
+                    if (videoView.isPlaying()) {
+                        // On screen deliberately: a capture then holds the video's reported
+                        // position and the picture it is showing at the same instant, which is
+                        // the only way to tell a reporting offset from a real lag.
+                        appendLine(
+                            "vid %d ms  tgt %d ms  drift %d ms  rate %.3f  seeks %d".format(
+                                videoView.positionMs(), videoView.followTargetMs,
+                                videoView.driftMs, videoView.rate, videoView.seeks
+                            )
+                        )
+                    }
                     append("master ${s.multiSync.lastMaster}  rendered ${s.renderedFrames}  dropped ${s.droppedFrames}")
                     if (s.message.isNotEmpty()) append("\n${s.message}")
                 }
