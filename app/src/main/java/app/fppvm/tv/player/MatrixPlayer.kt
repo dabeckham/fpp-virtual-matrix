@@ -172,6 +172,10 @@ class MatrixPlayer(
     @Volatile
     private var ddpSender = ""
 
+    /** When the master last told us to go dark. Blanked is a state the master holds us in. */
+    @Volatile
+    private var lastBlankMs = 0L
+
     /**
      * Lets a push wake the playback thread immediately instead of waiting out the idle tick.
      * Explicitly a `java.lang.Object`: Kotlin hides `wait`/`notifyAll` on [Any].
@@ -315,6 +319,7 @@ class MatrixPlayer(
         localPlayback = false
         localVideoName = ""
         videoIsPaired = false
+        lastBlankMs = System.currentTimeMillis()
         onVideoPair?.invoke(null)
         publish(status.copy(state = State.BLANKED, frame = -1, message = "blanked by $masterIp"))
     }
@@ -738,6 +743,14 @@ class MatrixPlayer(
                 }
                 lastFrame = Int.MIN_VALUE
                 val nowMs = System.currentTimeMillis()
+                // Blanked is a state a master *holds* us in, not somewhere to be left forever.
+                // onBlank stops the clock, so the master-quiet check above -- which only fires
+                // while the clock runs -- could never bring us back, and the panel went on
+                // reporting "blanked" long after the show had ended. A master that is still
+                // blanking us keeps sending, so silence past the timeout means it has simply gone.
+                if (status.state == State.BLANKED && nowMs - lastBlankMs > MASTER_TIMEOUT_MS) {
+                    publish(status.copy(state = State.IDLE, frame = -1, message = "master idle"))
+                }
                 // Live output outranks the idle pattern, and outranks a blank: a sequencer pushing
                 // frames at this panel is someone standing in front of it, right now, expecting to
                 // see what they are building.
