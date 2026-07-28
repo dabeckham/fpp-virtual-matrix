@@ -41,6 +41,19 @@ class VideoLayerView @JvmOverloads constructor(
 
         /** Gain from seconds of error to a rate adjustment. */
         private const val CORRECTION_GAIN = 0.04f
+
+        /** True when the error is too large to walk off and a real seek is cheaper. */
+        fun needsSeek(errorMs: Long): Boolean = kotlin.math.abs(errorMs) > SEEK_THRESHOLD_MS
+
+        /**
+         * Playback rate that pulls a video [errorMs] behind the show back into line.
+         *
+         * Positive error means the show is ahead, so the video is asked to run fast. Deliberately
+         * gentle and clamped: this has to be inaudible and invisible, and it is applied
+         * continuously, so it does not need to close the gap in one step.
+         */
+        fun rateFor(errorMs: Long): Float =
+            (1f + (errorMs / 1000f) * CORRECTION_GAIN).coerceIn(MIN_RATE, MAX_RATE)
     }
 
     private var player: MediaPlayer? = null
@@ -57,6 +70,36 @@ class VideoLayerView @JvmOverloads constructor(
     @Volatile
     var lastError: String = ""
         private set
+
+    /** How far the video is behind the show, milliseconds. Positive means the show is ahead. */
+    @Volatile
+    var driftMs: Long = 0
+        private set
+
+    /** Playback rate currently in force. 1.0 when not following anything. */
+    @Volatile
+    var rate: Float = 1f
+        private set
+
+    /** Number of times the drift was too large to walk off and a real seek was needed. */
+    @Volatile
+    var seeks: Int = 0
+        private set
+
+    /**
+     * A paired video is silent: the show's audio is played by the master, and a room full of
+     * panels each playing their own copy a few milliseconds apart would be worse than useless.
+     * Standalone playback from the file manager keeps its sound.
+     */
+    @Volatile
+    var muted: Boolean = false
+        set(value) {
+            field = value
+            try {
+                player?.setVolume(if (value) 0f else 1f, if (value) 0f else 1f)
+            } catch (_: Throwable) {
+            }
+        }
 
     init {
         holder.addCallback(this)
@@ -84,6 +127,7 @@ class VideoLayerView @JvmOverloads constructor(
                 setDisplay(this@VideoLayerView.holder)
                 setDataSource(file.absolutePath)
                 isLooping = loop
+                if (muted) setVolume(0f, 0f)
                 setOnErrorListener { _, what, extra ->
                     lastError = "media error $what/$extra"
                     Log.w(TAG, "playback error on ${file.name}: $what/$extra")
@@ -93,7 +137,10 @@ class VideoLayerView @JvmOverloads constructor(
                 start()
             }
             lastError = ""
-            Log.i(TAG, "playing ${file.name}")
+            driftMs = 0
+            rate = 1f
+            seeks = 0
+            Log.i(TAG, "playing ${file.name}${if (muted) " (muted)" else ""}")
             true
         } catch (t: Throwable) {
             lastError = t.message ?: "could not open"
@@ -145,8 +192,10 @@ class VideoLayerView @JvmOverloads constructor(
         val pos = positionMs()
         if (pos < 0) return 0f
         val errorMs = targetMs - pos
+        driftMs = errorMs
 
-        if (kotlin.math.abs(errorMs) > SEEK_THRESHOLD_MS) {
+        if (needsSeek(errorMs)) {
+            seeks++
             // Too far out to walk off. This is the expensive path, which is exactly why the media
             // wants a short GOP: the decoder has to run from the previous keyframe to here.
             try {
@@ -155,12 +204,22 @@ class VideoLayerView @JvmOverloads constructor(
             } catch (t: Throwable) {
                 Log.w(TAG, "seek to $targetMs failed: ${t.message}")
             }
+            rate = 1f
             return 1f
         }
 
-        val rate = (1f + (errorMs / 1000f) * CORRECTION_GAIN).coerceIn(MIN_RATE, MAX_RATE)
-        setRate(p, rate)
-        return rate
+        val next = rateFor(errorMs)
+        setRate(p, next)
+        rate = next
+        return next
+    }
+
+    /** Stops steering and lets the file run at its own pace. */
+    fun releaseFollow() {
+        val p = player ?: return
+        setRate(p, 1f)
+        rate = 1f
+        driftMs = 0
     }
 
     private fun setRate(p: MediaPlayer, rate: Float) {

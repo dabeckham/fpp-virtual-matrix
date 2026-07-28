@@ -80,6 +80,10 @@ class MainActivity : ComponentActivity() {
         store = SequenceStore(File(filesDir, SequenceStorage.SEQ_SUBDIR))
         player = MatrixPlayer(store, matrixView, config)
         player.onVideoPair = { f -> runOnUiThread { setVideo(f) } }
+        // Steering runs on the playback thread on purpose: it is a rate nudge on the media player,
+        // not a UI change, and hopping to the main thread every half second to do it would put the
+        // correction behind whatever else the UI happens to be doing.
+        player.onVideoFollow = { showMs -> videoView.follow(showMs) }
         APP_PLAYER = player
 
         if (config.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -246,7 +250,12 @@ class MainActivity : ComponentActivity() {
             return
         }
         videoView.visibility = View.VISIBLE
-        videoView.loop = config.loopPlayback
+        // A video paired with a sequence must not loop: it is being steered at the show's clock,
+        // and wrapping to the start would read as an enormous error and trigger an endless seek.
+        // It is also silent — the master plays the show's audio.
+        val paired = player.videoIsPaired
+        videoView.loop = if (paired) false else config.loopPlayback
+        videoView.muted = paired
         matrixView.videoUnderlay = true
         player.videoUnderlay = true
         videoView.play(file)
@@ -264,6 +273,12 @@ class MainActivity : ComponentActivity() {
         put("positionMs", videoView.positionMs())
         put("durationMs", videoView.durationMs())
         put("underlay", matrixView.videoUnderlay)
+        put("paired", player.videoIsPaired)
+        put("muted", videoView.muted)
+        // What the steering is actually doing, so drift can be measured rather than assumed.
+        put("driftMs", videoView.driftMs)
+        put("rate", String.format("%.3f", videoView.rate))
+        put("seeks", videoView.seeks)
         put("error", videoView.lastError)
     }
 

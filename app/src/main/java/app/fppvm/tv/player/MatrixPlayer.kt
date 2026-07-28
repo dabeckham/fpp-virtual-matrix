@@ -50,6 +50,13 @@ class MatrixPlayer(
 
         /** Idle repaint cadence (test pattern / status). */
         private const val IDLE_FRAME_MS = 50L
+
+        /**
+         * How often the video is steered back towards the show. Rate correction is continuous, so
+         * this only sets how quickly a new error is noticed; doing it per frame would set the
+         * playback rate up to 40 times a second for no benefit.
+         */
+        private const val FOLLOW_INTERVAL_MS = 500L
     }
 
     enum class State { IDLE, WAITING_FOR_FILE, PLAYING, BLANKED, ERROR }
@@ -194,6 +201,20 @@ class MatrixPlayer(
     var onVideoPair: ((java.io.File?) -> Unit)? = null
 
     /**
+     * Steer the paired video towards this position in the show, milliseconds from the start of the
+     * sequence. Called only while a sequence is actually running, and only every
+     * [FOLLOW_INTERVAL_MS] — the correction is a rate nudge, not a jump, so it does not need to be
+     * applied per frame, and setting the playback rate is not free.
+     */
+    @Volatile
+    var onVideoFollow: ((Long) -> Unit)? = null
+
+    /** True while a video is on the layer *because* it is paired with the running sequence. */
+    @Volatile
+    var videoIsPaired: Boolean = false
+        private set
+
+    /**
      * The video playing on its own, started from the file manager rather than paired with a
      * sequence. Tracked separately because live channel data arriving does **not** stop it — the
      * two are different layers, and a sequencer pushing effects over a video is the point.
@@ -268,6 +289,7 @@ class MatrixPlayer(
             window = null
         }
         localVideoName = ""
+        videoIsPaired = false
         onVideoPair?.invoke(null)
         publish(status.copy(state = State.IDLE, sequence = "", frame = -1, message = "stopped by $masterIp"))
     }
@@ -292,6 +314,7 @@ class MatrixPlayer(
         clock.stop()
         localPlayback = false
         localVideoName = ""
+        videoIsPaired = false
         onVideoPair?.invoke(null)
         publish(status.copy(state = State.BLANKED, frame = -1, message = "blanked by $masterIp"))
     }
@@ -414,6 +437,7 @@ class MatrixPlayer(
             localLoop = loop
             localPlayback = true
             localVideoName = file.name
+            videoIsPaired = false
             onVideoPair?.invoke(file)
             publish(
                 status.copy(
@@ -447,6 +471,7 @@ class MatrixPlayer(
     fun stopLocal() {
         localPlayback = false
         localVideoName = ""
+        videoIsPaired = false
         onVideoPair?.invoke(null)
         clock.stop()
         synchronized(readerLock) {
@@ -516,7 +541,9 @@ class MatrixPlayer(
             // MultiSync outranks everything: whatever was on the video layer is replaced by this
             // sequence's own pairing, or cleared if it has none. The master is running a show.
             localVideoName = ""
-            onVideoPair?.invoke(store.pairedVideo(file.name))
+            val paired = store.pairedVideo(file.name)
+            videoIsPaired = paired != null
+            onVideoPair?.invoke(paired)
             decodeMsAvg = 0.0
             paintMsAvg = 0.0
             if (startImmediately) {
@@ -598,6 +625,7 @@ class MatrixPlayer(
     private var paintMsAvg = 0.0
     /** Playback-thread only: whether the last pass painted live data, so transitions publish once. */
     private var ddpDriving = false
+    private var lastFollowMs = 0L
     private var lastFps = 0f
     private var fpsWindow = 0
     private var fpsWindowStart = 0L
@@ -686,6 +714,16 @@ class MatrixPlayer(
                                 )
                             )
                         }
+                    }
+                }
+                // Steer the paired video at the show. Nothing else knows both where the sequence
+                // has got to and that a video is riding along with it.
+                if (videoIsPaired && clock.isRunning) {
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastFollowMs >= FOLLOW_INTERVAL_MS) {
+                        lastFollowMs = nowMs
+                        val step = clock.stepTimeMs.coerceAtLeast(1)
+                        onVideoFollow?.invoke((clock.positionAt(System.nanoTime()) * step).toLong())
                     }
                 }
                 // Re-read the clock: `now` was taken before decode and paint, and on a large
