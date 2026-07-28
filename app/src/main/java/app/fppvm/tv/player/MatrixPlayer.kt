@@ -723,12 +723,22 @@ class MatrixPlayer(
                 }
                 // Steer the paired video at the show. Nothing else knows both where the sequence
                 // has got to and that a video is riding along with it.
-                if (videoIsPaired && clock.isRunning) {
+                //
+                // The target is the frame the panel has just PUT ON SCREEN, not where the show
+                // clock has reached by now. Those differ by however long decode and paint took,
+                // and this is read after both. Steering at the live clock therefore asks the video
+                // to be where the matrix will be a paint from now, and it obliges -- measured on
+                // an Android 9 panel at 10 fps, the video's picture ran 2 frames (80 ms) ahead of
+                // the effects while the follow loop reported itself settled to within a few ms.
+                //
+                // Matching picture to picture is also the right target when the two rates differ:
+                // whatever the panel costs to draw, the video lands with the frame beside it.
+                if (videoIsPaired && clock.isRunning && frame >= 0) {
                     val nowMs = System.currentTimeMillis()
                     if (nowMs - lastFollowMs >= FOLLOW_INTERVAL_MS) {
                         lastFollowMs = nowMs
                         val step = clock.stepTimeMs.coerceAtLeast(1)
-                        onVideoFollow?.invoke((clock.positionAt(System.nanoTime()) * step).toLong())
+                        onVideoFollow?.invoke(frame.toLong() * step)
                     }
                 }
                 // Re-read the clock: `now` was taken before decode and paint, and on a large
