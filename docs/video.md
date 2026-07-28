@@ -87,24 +87,41 @@ position, not that timing slipped.
 
 This is why the short GOP matters: the rare seek that does happen is then cheap.
 
-Measured on an Android 9 TV following a live show: drift bounded 274–384 ms, rate ~1.012, **zero
-seeks over 110 seconds**.
+Measured on an Android 9 TV over a full 120 second pass, sampling every 4 seconds:
 
-### Known limitation
+```
+381 → 220 → 178 → 151 → 124 → 104 → 85 → 69 → 57 → 47 → 37 → 30 → 24 → 18 → 13 → 9 → 7 → 6 → 4 → 2 → 1 → -1 → -3 ms
+```
 
-The residual drift **does not converge to zero** — it holds steady at roughly 300 ms rather than
-decaying away. Rate is a velocity input against a position error, so a constant residual means either
-a constant disturbance or a constant measurement offset. The two candidates need opposite fixes:
+Clean exponential decay, settling at **−8 ms** with **zero seeks**. The fitted time constant is about
+19 seconds against the ~25 seconds the 0.04 gain predicts.
 
-- `MediaPlayer.getCurrentPosition()` reporting *behind* the displayed picture, in which case the
-  video is already in sync and correcting it would push the picture early; or
-- genuine pipeline latency, which would want an integral term.
+### What the target is, and why it is not the clock
 
-Until it is known which, the loop is left as it is. A steady 300 ms offset can also simply be dialled
-out with `remoteOffsetMs` if it is visible on your panel.
+The video is steered at **the frame the panel has just put on screen**, not at where the show clock
+has reached.
 
-The measurement above also came from a short sequence on repeat rather than a full song. Treat the
-numbers as indicative.
+Those are not the same instant. The follow loop runs after the sequence frame has been decoded and
+painted, so the clock has already moved on by however long that work took, while the picture a viewer
+is looking at is the frame chosen *before* it started. Aiming at the clock therefore asks the video to
+be where the matrix will be one paint from now — and the video obliges.
+
+Measured with a timecode burned into the video and a matching one rendered into the sequence, both
+read out of a **single screen capture** so nothing depends on when the capture happened:
+
+| target | on-screen offset, video vs effects | n |
+|---|---|---|
+| show clock | **−86 ms** (video ahead), median −80 | 7 |
+| frame just painted | **+22 ms**, median +20 | 24 |
+
+The spread either side (~45 ms) is the same in both and is the measurement's own floor: the panel
+paints every ~97 ms, so a single capture can only place the sequence's frame to within half of that.
+
+Matching picture to picture also stays correct when the panel gets cheaper or more expensive to draw,
+which a constant tuned per device would not.
+
+If a residual offset is still visible on your panel, `remoteOffsetMs` dials the whole device earlier
+or later.
 
 ## How it is composited
 
