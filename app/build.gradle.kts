@@ -22,8 +22,16 @@ android {
     }
 
     signingConfigs {
-        // Committed debug keystore (public debug creds) -> stable signatures across machines/CI,
-        // so `adb install -r` updates in place instead of failing on a signature mismatch.
+        // Committed debug keystore -> stable signatures across machines and CI, so `adb install -r`
+        // updates in place instead of failing on a signature mismatch. Without a committed key
+        // Gradle mints a random one per build machine and every CI build is signed differently.
+        //
+        // This key belongs to THIS app and nothing else. Never copy a debug keystore in from
+        // another project: the signature requirement is per package name, so sharing one buys
+        // nothing, and it silently widens the blast radius of the key to every app that carries it.
+        // Generate a fresh one instead:
+        //
+        //   keytool -genkeypair -keystore app/debug.keystore -storepass android         //     -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048         //     -validity 10950 -dname 'CN=Android Debug,O=Android,C=US'
         getByName("debug") {
             storeFile = file("debug.keystore")
             storePassword = "android"
