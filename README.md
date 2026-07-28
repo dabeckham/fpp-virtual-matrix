@@ -20,9 +20,10 @@ It is a port of four pieces of [FPP](https://github.com/FalconChristmas/fpp):
 
 ## What it does
 
-- **Joins the show.** Listens on UDP 32320 and the `239.70.80.80` MultiSync group, announces itself
-  with a ping v3 packet, and answers discovery, so it appears in the player's MultiSync list like
-  any other remote.
+- **Joins the show.** Listens on UDP 32320, both for broadcast and on the MultiSync **multicast**
+  group `239.70.80.80` (which is 239.F.P.P), joined on every usable interface. It announces itself
+  with a ping v3 packet and answers discovery, so it appears in the player's MultiSync list like any
+  other remote. Either transport works, so it does not matter which the player is set to send.
 - **Follows the player.** Sequence open / start / stop / sync packets drive playback. Between sync
   packets the position free-runs off the local monotonic clock; each packet applies a proportional
   correction, with a hard re-anchor only for a real seek.
